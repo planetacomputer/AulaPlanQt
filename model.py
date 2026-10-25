@@ -7,8 +7,10 @@ class AulaPlanModel:
         self.rows = rows
         self.cols = cols
         self.vertical_aisle_after = vertical_aisle_after  # 0 = sin pasillo, >0 = pasillo tras esta columna
+        self.show_computer_status = True
         self.students = []
         self.grid = {}  # (row, col) -> student_name
+        self.computer_working = {}  # (row, col) -> bool; missing entries default to working
         self.undo_stack = []
         self.redo_stack = []
 
@@ -19,6 +21,7 @@ class AulaPlanModel:
             "vertical_aisle_after": self.vertical_aisle_after,
             "students": list(self.students),
             "grid": dict(self.grid),
+            "computer_working": dict(self.computer_working),
         }
         self.undo_stack.append(state)
         self.redo_stack.clear()
@@ -32,6 +35,7 @@ class AulaPlanModel:
             "vertical_aisle_after": self.vertical_aisle_after,
             "students": list(self.students),
             "grid": dict(self.grid),
+            "computer_working": dict(self.computer_working),
         }
         self.redo_stack.append(current_state)
 
@@ -41,6 +45,7 @@ class AulaPlanModel:
         self.vertical_aisle_after = prev_state.get("vertical_aisle_after", 0)
         self.students = prev_state["students"]
         self.grid = prev_state["grid"]
+        self.computer_working = prev_state.get("computer_working", {})
         return True
 
     def redo(self):
@@ -52,6 +57,7 @@ class AulaPlanModel:
             "vertical_aisle_after": self.vertical_aisle_after,
             "students": list(self.students),
             "grid": dict(self.grid),
+            "computer_working": dict(self.computer_working),
         }
         self.undo_stack.append(current_state)
 
@@ -61,6 +67,7 @@ class AulaPlanModel:
         self.vertical_aisle_after = next_state.get("vertical_aisle_after", 0)
         self.students = next_state["students"]
         self.grid = next_state["grid"]
+        self.computer_working = next_state.get("computer_working", {})
         return True
 
     def set_grid_size(self, rows, cols, vertical_aisle_after):
@@ -73,6 +80,17 @@ class AulaPlanModel:
             for pos, name in self.grid.items()
             if pos[0] < rows and pos[1] < cols
         }
+        self.computer_working = {
+            pos: working
+            for pos, working in self.computer_working.items()
+            if pos[0] < rows and pos[1] < cols
+        }
+
+    def set_computer_working(self, pos, working):
+        working = bool(working)
+        if self.computer_working.get(pos, True) != working:
+            self.save_state()
+            self.computer_working[pos] = working
 
     def add_student(self, name):
         name = name.strip()
@@ -91,6 +109,23 @@ class AulaPlanModel:
             }
             return True
         return False
+
+    def rename_student(self, old_name, new_name):
+        new_name = new_name.strip()
+        if old_name not in self.students or not new_name:
+            return False
+        if new_name == old_name:
+            return True
+        if new_name in self.students:
+            return False
+
+        self.save_state()
+        self.students[self.students.index(old_name)] = new_name
+        self.grid = {
+            pos: new_name if name == old_name else name
+            for pos, name in self.grid.items()
+        }
+        return True
 
     def move_or_swap(self, src_pos, dst_pos):
         self.save_state()

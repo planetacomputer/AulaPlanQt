@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QGridLayout, QPushButton, QLineEdit, QListWidget, QListWidgetItem,
     QSpinBox, QLabel, QCheckBox, QFileDialog, QMessageBox, QSplitter,
-    QScrollArea, QFrame, QAbstractItemView
+    QScrollArea, QFrame, QAbstractItemView, QInputDialog
 )
 from model import AulaPlanModel
 from storage import AulaPlanStorage
@@ -108,14 +108,17 @@ class AulaPlanWindow(QMainWindow):
             self.spin_rows.blockSignals(True)
             self.spin_cols.blockSignals(True)
             self.chk_aisle.blockSignals(True)
+            self.chk_computer_status.blockSignals(True)
 
             self.spin_rows.setValue(self.model.rows)
             self.spin_cols.setValue(self.model.cols)
             self.chk_aisle.setChecked(self.model.vertical_aisle_after > 0)
+            self.chk_computer_status.setChecked(self.model.show_computer_status)
 
             self.spin_rows.blockSignals(False)
             self.spin_cols.blockSignals(False)
             self.chk_aisle.blockSignals(False)
+            self.chk_computer_status.blockSignals(False)
 
             self.refresh_ui()
 
@@ -153,6 +156,11 @@ class AulaPlanWindow(QMainWindow):
         self.chk_aisle = QCheckBox("Passadís Vertical")
         self.chk_aisle.stateChanged.connect(self.update_grid_config)
         toolbar.addWidget(self.chk_aisle)
+
+        self.chk_computer_status = QCheckBox("Mostrar estado ordenadores")
+        self.chk_computer_status.setChecked(self.model.show_computer_status)
+        self.chk_computer_status.toggled.connect(self.toggle_computer_status_visibility)
+        toolbar.addWidget(self.chk_computer_status)
 
         toolbar.addStretch()
 
@@ -205,6 +213,7 @@ class AulaPlanWindow(QMainWindow):
         self.listbox_students.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self.listbox_students.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.listbox_students.setStyleSheet("font-size: 14pt;")
+        self.listbox_students.itemDoubleClicked.connect(self.rename_student)
         left_layout.addWidget(self.listbox_students)
 
         btn_remove = QPushButton("Eliminar Seleccionats")
@@ -272,9 +281,35 @@ class AulaPlanWindow(QMainWindow):
                 cell_layout = QVBoxLayout(cell)
                 cell_layout.setContentsMargins(1, 1, 1, 1)
                 cell_layout.setSpacing(0)
+                header_layout = QHBoxLayout()
+                header_layout.setContentsMargins(2, 0, 2, 0)
                 lbl_pos = QLabel(f"F{r+1}-C{c+1}")
                 lbl_pos.setStyleSheet(f"color: {'white' if is_highlighted else '#777'}; font-weight: bold; border: none; background: transparent;")
-                cell_layout.addWidget(lbl_pos)
+                header_layout.addWidget(lbl_pos)
+
+                computer_working = self.model.computer_working.get((r, c), True)
+                chk_computer = QCheckBox("✓" if computer_working else "✗")
+                chk_computer.setVisible(self.model.show_computer_status)
+                chk_computer.setChecked(computer_working)
+                chk_computer.setToolTip("Marca si l'ordinador funciona")
+                chk_computer.setAccessibleName(f"Ordinador F{r+1}-C{c+1}")
+                chk_computer.setStyleSheet("""
+                    QCheckBox {
+                        background: transparent;
+                        border: none;
+                        color: #d32f2f;
+                        font-size: 18px;
+                        font-weight: bold;
+                    }
+                    QCheckBox::indicator { width: 0; height: 0; }
+                    QCheckBox:checked { color: #16803a; }
+                """)
+                chk_computer.toggled.connect(
+                    lambda working, pos=(r, c), checkbox=chk_computer:
+                    self.set_computer_status(pos, checkbox, working)
+                )
+                header_layout.addWidget(chk_computer)
+                cell_layout.addLayout(header_layout)
 
                 lbl_name = QLabel(student_name if student_name else "[ Buit ]")
                 lbl_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -304,6 +339,14 @@ class AulaPlanWindow(QMainWindow):
                 aisle_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 aisle_lbl.setStyleSheet("color: #ccc; font-size: 24pt;")
                 self.grid_layout.addWidget(aisle_lbl, r, aisle_col)
+
+    def set_computer_status(self, pos, checkbox, working):
+        self.model.set_computer_working(pos, working)
+        checkbox.setText("✓" if working else "✗")
+
+    def toggle_computer_status_visibility(self, visible):
+        self.model.show_computer_status = visible
+        self.refresh_ui()
 
     def filter_students(self):
         query = self.entry_student.text().lower()
@@ -375,6 +418,55 @@ class AulaPlanWindow(QMainWindow):
                 self.entry_student.clear()
                 self.refresh_ui()
 
+    def rename_student(self, item=None):
+        if item is None:
+            selected_items = self.listbox_students.selectedItems()
+            if len(selected_items) != 1:
+                QMessageBox.information(
+                    self,
+                    "Editar nom",
+                    "Fes doble clic sobre un alumne per editar-ne el nom.",
+                )
+                return
+            item = selected_items[0]
+
+        if not item:
+            QMessageBox.information(
+                self,
+                "Editar nom",
+                "Fes doble clic sobre un alumne per editar-ne el nom.",
+            )
+            return
+
+        old_name = item.data(Qt.ItemDataRole.UserRole)
+        new_name, accepted = QInputDialog.getText(
+            self,
+            "Editar nom",
+            "Nom de l'alumne:",
+            QLineEdit.EchoMode.Normal,
+            old_name,
+        )
+        if not accepted:
+            return
+
+        new_name = new_name.strip()
+        if not new_name:
+            QMessageBox.warning(self, "Nom invàlid", "El nom no pot estar buit.")
+            return
+        if new_name == old_name:
+            return
+        if not self.model.rename_student(old_name, new_name):
+            QMessageBox.warning(
+                self,
+                "Nom duplicat",
+                f"Ja existeix un alumne amb el nom '{new_name}'.",
+            )
+            return
+
+        if self.highlighted_student == old_name:
+            self.highlighted_student = new_name
+        self.refresh_ui()
+
     def remove_student(self):
         selected_items = self.listbox_students.selectedItems()
         if not selected_items:
@@ -415,6 +507,7 @@ class AulaPlanWindow(QMainWindow):
             self.spin_rows.setValue(self.model.rows)
             self.spin_cols.setValue(self.model.cols)
             self.chk_aisle.setChecked(self.model.vertical_aisle_after > 0)
+            self.chk_computer_status.setChecked(self.model.show_computer_status)
             self.refresh_ui()
 
     def redo(self):
@@ -422,6 +515,7 @@ class AulaPlanWindow(QMainWindow):
             self.spin_rows.setValue(self.model.rows)
             self.spin_cols.setValue(self.model.cols)
             self.chk_aisle.setChecked(self.model.vertical_aisle_after > 0)
+            self.chk_computer_status.setChecked(self.model.show_computer_status)
             self.refresh_ui()
 
     def import_csv(self):
@@ -460,14 +554,17 @@ class AulaPlanWindow(QMainWindow):
             self.spin_rows.blockSignals(True)
             self.spin_cols.blockSignals(True)
             self.chk_aisle.blockSignals(True)
+            self.chk_computer_status.blockSignals(True)
 
             self.spin_rows.setValue(self.model.rows)
             self.spin_cols.setValue(self.model.cols)
             self.chk_aisle.setChecked(self.model.vertical_aisle_after > 0)
+            self.chk_computer_status.setChecked(self.model.show_computer_status)
 
             self.spin_rows.blockSignals(False)
             self.spin_cols.blockSignals(False)
             self.chk_aisle.blockSignals(False)
+            self.chk_computer_status.blockSignals(False)
 
             self.refresh_ui()
 

@@ -25,3 +25,8 @@ env/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+#HTML, CSV and SVG files
+*.html
+*.csv
+*.svg

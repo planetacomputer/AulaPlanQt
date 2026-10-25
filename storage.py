@@ -19,8 +19,14 @@ class AulaPlanStorage:
             "rows": model.rows,
             "cols": model.cols,
             "vertical_aisle_after": model.vertical_aisle_after,
+            "show_computer_status": model.show_computer_status,
             "students": model.students,
             "grid": {f"{r},{c}": name for (r, c), name in model.grid.items()},
+            "computer_working": {
+                f"{r},{c}": model.computer_working.get((r, c), True)
+                for r in range(model.rows)
+                for c in range(model.cols)
+            },
         }
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
@@ -39,11 +45,16 @@ class AulaPlanStorage:
                 model.vertical_aisle_after = model.cols // 2 if model.cols > 1 else 1
             else:
                 model.vertical_aisle_after = 0
+            model.show_computer_status = data.get("show_computer_status", True)
 
             model.students = data["students"]
             model.grid = {
                 tuple(map(int, k.split(","))): v
                 for k, v in data["grid"].items()
+            }
+            model.computer_working = {
+                tuple(map(int, k.split(","))): bool(working)
+                for k, working in data.get("computer_working", {}).items()
             }
 
     @staticmethod
@@ -103,6 +114,20 @@ class AulaPlanStorage:
                 svg_lines.append(
                     f'<text x="{x + 15}" y="{y + 24}" font-family="Arial" font-size="12" font-weight="bold" fill="#777777">F{r+1}-C{c+1}</text>'
                 )
+                if model.show_computer_status:
+                    checkbox_x = x + cell_w - 46
+                    checkbox_y = y + 10
+                    computer_working = model.computer_working.get((r, c), True)
+                    status_text = "Ordinador funciona" if computer_working else "Ordinador no funciona"
+                    svg_lines.append(
+                        f'<g aria-label="{status_text}"><title>{status_text}</title>'
+                        + (
+                            f'<path d="M {checkbox_x + 2} {checkbox_y + 8} l 4 4 l 8 -9" fill="none" stroke="#16803a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>'
+                            if computer_working
+                            else f'<path d="M {checkbox_x + 3} {checkbox_y + 3} l 10 10 M {checkbox_x + 13} {checkbox_y + 3} l -10 10" fill="none" stroke="#d32f2f" stroke-width="3" stroke-linecap="round"/>'
+                        )
+                        + "</g>"
+                    )
                 svg_lines.append(
                     f'<text x="{x + (cell_w - 20)/2}" y="{y + 65}" font-family="Arial" font-size="25" font-weight="bold" fill="{text_color}" text-anchor="middle">{display_text}</text>'
                 )
@@ -139,7 +164,11 @@ class AulaPlanStorage:
         .classroom {{ display: grid; grid-template-columns: {grid_columns}; gap: 14px; justify-content: center; }}
         .desk {{ background: #f5f5f5; border: 2px solid #ccc; border-radius: 8px; padding: 12px; height: 100px; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 2px 4px rgba(0,0,0,0.06); }}
         .desk.seated {{ background: #e1f5fe; border-color: #90caf9; }}
+        .desk-header {{ display: flex; justify-content: space-between; align-items: center; }}
         .pos {{ font-size: 12px; font-weight: bold; color: #777; }}
+        .computer-status {{ width: 20px; text-align: center; font-size: 20px; line-height: 1; font-weight: bold; }}
+        .computer-status.working {{ color: #16803a; }}
+        .computer-status.not-working {{ color: #d32f2f; }}
         .name {{ font-size: 40px; font-weight: bold; text-align: center; color: #0d47a1; word-wrap: break-word; }}
         .empty {{ font-size: 16px; color: #bbb; text-align: center; font-style: italic; }}
         .aisle {{ width: 20px; }}
@@ -157,15 +186,25 @@ class AulaPlanStorage:
                 if aisle_col > 0 and c == aisle_col:
                     html_content += '    <div class="aisle"></div>\n'
                 student_name = model.grid.get((r, c), "")
+                status_markup = ""
+                if model.show_computer_status:
+                    computer_working = model.computer_working.get((r, c), True)
+                    status_text = "Ordinador funciona" if computer_working else "Ordinador no funciona"
+                    status_class = "working" if computer_working else "not-working"
+                    status_icon = "✓" if computer_working else "✗"
+                    status_markup = f'<span class="computer-status {status_class}" aria-label="{status_text}" title="{status_text}">{status_icon}</span>'
+                header = f"""        <div class="desk-header">
+            <span class="pos">F{r+1}-C{c+1}</span>
+            {status_markup}
+        </div>
+"""
                 if student_name:
                     html_content += f"""    <div class="desk seated">
-        <span class="pos">F{r+1}-C{c+1}</span>
-        <span class="name">{html.escape(student_name)}</span>
+{header}        <span class="name">{html.escape(student_name)}</span>
     </div>\n"""
                 else:
                     html_content += f"""    <div class="desk">
-        <span class="pos">F{r+1}-C{c+1}</span>
-        <span class="empty">[ Buit ]</span>
+{header}        <span class="empty">[ Buit ]</span>
     </div>\n"""
 
         html_content += """    </div>

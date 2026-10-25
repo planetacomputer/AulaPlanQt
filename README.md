@@ -1,6 +1,6 @@
 # 🏫 AulaPlan — Distribució i Gestió de la Classe
 
-**AulaPlan** és una aplicació d'escriptori desenvolupada en Python i Tkinter per a la gestió visual, intuïtiva i flexible de la distribució d'alumnes a l'aula. Permet als docents organitzar els seients mitjançant l'arrossegament i soltada (*drag & drop*), configurar les mides de la graella, afegir un passadís personalitzat i exportar el resultat en múltiples formats.
+**AulaPlan** és una aplicació d'escriptori desenvolupada en Python i PyQt per a la gestió visual, intuïtiva i flexible de la distribució d'alumnes a l'aula. Permet als docents organitzar els seients mitjançant l'arrossegament i soltada (*drag & drop*), configurar les mides de la graella, afegir un passadís personalitzat i exportar el resultat en múltiples formats.
 
 ---
 ![Captura de pantalla d'AulaPlan](./docs/aulaplan.png)
@@ -11,13 +11,15 @@
   - Interfície adaptada a la mida de la classe amb vista de la pissarra a la part superior.
   - Targetes de seient grans i llegibles amb identificació de fila i columna (ex: `F1-C2`).
   - Indicació clara dels seients ocupats i lliures.
+  - Casella de selecció a cada seient per indicar si l'ordinador funciona.
+  - Opció **Mostrar estat ordinadors** per ocultar o mostrar els indicadors sense modificar-ne l'estat; també s'aplica a les exportacions HTML i SVG.
 
 - **Funció Arrossegar i Soltar (*Drag & Drop*)**:
   - Assigna alumnes des de la llista lateral cap a qualsevol seient buit.
   - Intercanvia alumnes de posició arrossegant-los entre seients.
   - Desassigna un alumne arrossegant-lo des del seu seient de tornada a la llista lateral.
 
-- **Feedback Visual de Destacat (Highlight)**: Cada vegada que es col·loca o mou un alumne de seient, es destaca automàticament en color blau intens durant 1 segon tant a la llista lateral com a la taula assignada.
+- **Gestió d'Alumnes**: Fes doble clic sobre un alumne a la llista lateral per canviar-ne el nom. Els canvis també s'apliquen al seient assignat i es poden desfer.
 
 - **Control del Passadís Vertical**: Permet activar i personalitzar un passadís vertical a la graella de l'aula. Des del fitxer de configuració es pot indicar la seva posició entre les columnes. 
 
@@ -35,9 +37,9 @@
 
 - **Exportació i Importació**:
   - **Importació CSV**: Carrega llistes d'alumnes ràpidament des de fitxers `.csv`.
-  - **JSON**: Guarda i carrega l'estat complet de l'aula (mides, llista d'alumnes i posicions).
-  - **SVG Vectorial**: Exporta la distribució en format `.svg` d'alta resolució apte per a impressió o modificació gràfica.
-  - **HTML**: Genera una pàgina web interactiva i dissenyada per ser impresa directament.
+  - **JSON**: Guarda i carrega l'estat complet de l'aula (mides, llista d'alumnes, posicions, estat dels ordinadors i visibilitat dels indicadors).
+  - **SVG Vectorial**: Exporta la distribució i l'estat dels ordinadors en format `.svg` d'alta resolució apte per a impressió o modificació gràfica.
+  - **HTML**: Genera una pàgina web amb l'estat dels ordinadors, dissenyada per ser impresa directament.
 
 ## Requisits
 
@@ -69,6 +71,27 @@ Per sortir de l'entorn virtual:
 deactivate
 ```
 
+## Executar les proves
+
+Executeu les ordres des de la carpeta del projecte. Instal·leu PyTest al mateix
+entorn virtual que feu servir per executar les proves:
+
+```bash
+source .venv/bin/activate
+python -m pip install pytest
+python3 -m pytest -q
+```
+
+Si no voleu activar l'entorn virtual, indiqueu-ne directament l'intèrpret:
+
+```bash
+.venv/bin/python -m pip install pytest
+.venv/bin/python -m pytest -q
+```
+
+Les proves cobreixen el model de l'aula, la persistència JSON, la importació CSV
+i les exportacions HTML i SVG.
+
 ### Windows (PowerShell)
 
 ```powershell
@@ -85,6 +108,8 @@ ordres amb el Python de l'entorn sense activar-lo:
 ```powershell
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install PyQt6 PyInstaller
+.\.venv\Scripts\python.exe -m pip install pytest
+.\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe main.py
 ```
 
