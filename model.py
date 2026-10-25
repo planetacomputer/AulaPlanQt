@@ -1,0 +1,122 @@
+import random
+
+
+class AulaPlanModel:
+
+    def __init__(self, rows=4, cols=4, vertical_aisle_after=0):
+        self.rows = rows
+        self.cols = cols
+        self.vertical_aisle_after = vertical_aisle_after  # 0 = sin pasillo, >0 = pasillo tras esta columna
+        self.students = []
+        self.grid = {}  # (row, col) -> student_name
+        self.undo_stack = []
+        self.redo_stack = []
+
+    def save_state(self):
+        state = {
+            "rows": self.rows,
+            "cols": self.cols,
+            "vertical_aisle_after": self.vertical_aisle_after,
+            "students": list(self.students),
+            "grid": dict(self.grid),
+        }
+        self.undo_stack.append(state)
+        self.redo_stack.clear()
+
+    def undo(self):
+        if not self.undo_stack:
+            return False
+        current_state = {
+            "rows": self.rows,
+            "cols": self.cols,
+            "vertical_aisle_after": self.vertical_aisle_after,
+            "students": list(self.students),
+            "grid": dict(self.grid),
+        }
+        self.redo_stack.append(current_state)
+
+        prev_state = self.undo_stack.pop()
+        self.rows = prev_state["rows"]
+        self.cols = prev_state["cols"]
+        self.vertical_aisle_after = prev_state.get("vertical_aisle_after", 0)
+        self.students = prev_state["students"]
+        self.grid = prev_state["grid"]
+        return True
+
+    def redo(self):
+        if not self.redo_stack:
+            return False
+        current_state = {
+            "rows": self.rows,
+            "cols": self.cols,
+            "vertical_aisle_after": self.vertical_aisle_after,
+            "students": list(self.students),
+            "grid": dict(self.grid),
+        }
+        self.undo_stack.append(current_state)
+
+        next_state = self.redo_stack.pop()
+        self.rows = next_state["rows"]
+        self.cols = next_state["cols"]
+        self.vertical_aisle_after = next_state.get("vertical_aisle_after", 0)
+        self.students = next_state["students"]
+        self.grid = next_state["grid"]
+        return True
+
+    def set_grid_size(self, rows, cols, vertical_aisle_after):
+        self.save_state()
+        self.rows = rows
+        self.cols = cols
+        self.vertical_aisle_after = vertical_aisle_after
+        self.grid = {
+            pos: name
+            for pos, name in self.grid.items()
+            if pos[0] < rows and pos[1] < cols
+        }
+
+    def add_student(self, name):
+        name = name.strip()
+        if name and name not in self.students:
+            self.save_state()
+            self.students.append(name)
+            return True
+        return False
+
+    def remove_student(self, name):
+        if name in self.students:
+            self.save_state()
+            self.students.remove(name)
+            self.grid = {
+                pos: st for pos, st in self.grid.items() if st != name
+            }
+            return True
+        return False
+
+    def move_or_swap(self, src_pos, dst_pos):
+        self.save_state()
+        src_student = self.grid.get(src_pos)
+        dst_student = self.grid.get(dst_pos)
+
+        if src_student:
+            if dst_student:
+                self.grid[src_pos] = dst_student
+                self.grid[dst_pos] = src_student
+            else:
+                del self.grid[src_pos]
+                self.grid[dst_pos] = src_student
+
+    def assign_unseated(self, student_name, dst_pos):
+        self.save_state()
+        self.grid[dst_pos] = student_name
+
+    def unseat_student(self, src_pos):
+        if src_pos in self.grid:
+            self.save_state()
+            del self.grid[src_pos]
+    
+    def clear_all_seats(self):
+        if self.grid:
+            self.save_state()
+            self.grid.clear()
+            return True
+        return False
