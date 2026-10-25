@@ -8,7 +8,7 @@ from storage import AulaPlanStorage
 
 
 def test_json_round_trip_preserves_class_and_computer_status(tmp_path):
-    model = AulaPlanModel(rows=1, cols=2, vertical_aisle_after=1)
+    model = AulaPlanModel(rows=1, cols=4, vertical_aisles=[1, 3])
     model.add_student("Ada")
     model.assign_unseated("Ada", (0, 0))
     model.set_computer_working((0, 1), False)
@@ -19,16 +19,26 @@ def test_json_round_trip_preserves_class_and_computer_status(tmp_path):
 
     data = json.loads(json_path.read_text(encoding="utf-8"))
     assert data["show_computer_status"] is False
-    assert data["computer_working"] == {"0,0": True, "0,1": False}
+    assert data["computer_working"] == {
+        "0,0": True,
+        "0,1": False,
+        "0,2": True,
+        "0,3": True,
+    }
 
     loaded = AulaPlanModel()
     AulaPlanStorage.load_json(json_path, loaded)
     assert loaded.rows == 1
-    assert loaded.cols == 2
-    assert loaded.vertical_aisle_after == 1
+    assert loaded.cols == 4
+    assert loaded.vertical_aisles == [1, 3]
     assert loaded.students == ["Ada"]
     assert loaded.grid == {(0, 0): "Ada"}
-    assert loaded.computer_working == {(0, 0): True, (0, 1): False}
+    assert loaded.computer_working == {
+        (0, 0): True,
+        (0, 1): False,
+        (0, 2): True,
+        (0, 3): True,
+    }
     assert loaded.show_computer_status is False
 
 
@@ -56,6 +66,27 @@ def test_loading_legacy_json_defaults_computer_status_to_visible_and_working(
     assert model.show_computer_status is True
     assert model.computer_working == {}
     assert model.computer_working.get((0, 0), True) is True
+
+
+def test_loading_legacy_single_aisle_position(tmp_path):
+    json_path = tmp_path / "legacy-position.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "rows": 1,
+                "cols": 6,
+                "vertical_aisle_after": 4,
+                "students": [],
+                "grid": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    model = AulaPlanModel()
+
+    AulaPlanStorage.load_json(json_path, model)
+
+    assert model.vertical_aisles == [4]
 
 
 def test_import_csv_adds_unique_nonempty_student_names(tmp_path):
@@ -109,6 +140,17 @@ def test_html_export_escapes_student_names(tmp_path):
     assert "<Ada & Grace>" not in exported
 
 
+def test_html_export_places_multiple_aisles_between_seats(tmp_path):
+    model = AulaPlanModel(rows=1, cols=4, vertical_aisles=[1, 3])
+    html_path = tmp_path / "class.html"
+
+    AulaPlanStorage.export_html(html_path, model)
+
+    exported = html_path.read_text(encoding="utf-8")
+    assert "grid-template-columns: 240px 20px 240px 240px 20px 240px" in exported
+    assert exported.count('class="aisle"') == 2
+
+
 @pytest.mark.parametrize(
     ("visible", "expected_colors"),
     [
@@ -133,3 +175,18 @@ def test_svg_export_respects_status_visibility_and_colors(
     ]
     assert {element.get("stroke") for element in paths} == expected_colors
 
+
+def test_svg_export_places_multiple_aisles_between_seats(tmp_path):
+    model = AulaPlanModel(rows=1, cols=4, vertical_aisles=[1, 3])
+    svg_path = tmp_path / "class.svg"
+
+    AulaPlanStorage.export_svg(svg_path, model)
+
+    root = ET.parse(svg_path).getroot()
+    lines = [
+        element for element in root.iter()
+        if element.tag.endswith("line")
+    ]
+    assert len(lines) == 2
+    assert [line.get("x1") for line in lines] == ["285", "1005"]
+    assert root.get("width") == "1520"

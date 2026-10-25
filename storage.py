@@ -18,7 +18,7 @@ class AulaPlanStorage:
         data = {
             "rows": model.rows,
             "cols": model.cols,
-            "vertical_aisle_after": model.vertical_aisle_after,
+            "vertical_aisles": model.vertical_aisles,
             "show_computer_status": model.show_computer_status,
             "students": model.students,
             "grid": {f"{r},{c}": name for (r, c), name in model.grid.items()},
@@ -39,7 +39,12 @@ class AulaPlanStorage:
             model.rows = data["rows"]
             model.cols = data["cols"]
             
-            if "vertical_aisle_after" in data:
+            if "vertical_aisles" in data:
+                model.vertical_aisles = model._normalize_aisles(
+                    data["vertical_aisles"],
+                    model.cols,
+                )
+            elif "vertical_aisle_after" in data:
                 model.vertical_aisle_after = data["vertical_aisle_after"]
             elif data.get("vertical_aisle", False):
                 model.vertical_aisle_after = model.cols // 2 if model.cols > 1 else 1
@@ -70,8 +75,8 @@ class AulaPlanStorage:
 
     @staticmethod
     def export_svg(filepath, model):
-        aisle_col = model.vertical_aisle_after
-        total_visual_cols = model.cols + (1 if aisle_col > 0 else 0)
+        aisle_positions = model.vertical_aisles
+        total_visual_cols = model.cols + len(aisle_positions)
         cell_w, cell_h = 240, 125
         margin = 40
         width = total_visual_cols * cell_w + 2 * margin
@@ -93,9 +98,7 @@ class AulaPlanStorage:
         start_y = margin + 80
         for r in range(model.rows):
             for c in range(model.cols):
-                visual_c = c
-                if aisle_col > 0 and c >= aisle_col:
-                    visual_c = c + 1
+                visual_c = c + sum(position <= c for position in aisle_positions)
 
                 x = margin + visual_c * cell_w + 10
                 y = start_y + r * cell_h + 10
@@ -132,8 +135,8 @@ class AulaPlanStorage:
                     f'<text x="{x + (cell_w - 20)/2}" y="{y + 65}" font-family="Arial" font-size="25" font-weight="bold" fill="{text_color}" text-anchor="middle">{display_text}</text>'
                 )
 
-        if aisle_col > 0:
-            ax = margin + aisle_col * cell_w + 5
+        for index, position in enumerate(aisle_positions):
+            ax = margin + (position + index) * cell_w + 5
             svg_lines.append(
                 f'<line x1="{ax}" y1="{start_y}" x2="{ax}" y2="{start_y + model.rows * cell_h}" stroke="#e0e0e0" stroke-dasharray="6" stroke-width="2"/>'
             )
@@ -145,12 +148,13 @@ class AulaPlanStorage:
 
     @staticmethod
     def export_html(filepath, model):
-        aisle_col = model.vertical_aisle_after
-        grid_columns = (
-            f"repeat({aisle_col}, 240px) 20px repeat({model.cols - aisle_col}, 240px)"
-            if aisle_col > 0
-            else f"repeat({model.cols}, 240px)"
-        )
+        aisle_positions = model.vertical_aisles
+        grid_tracks = []
+        for c in range(model.cols):
+            grid_tracks.append("240px")
+            if c + 1 in aisle_positions:
+                grid_tracks.append("20px")
+        grid_columns = " ".join(grid_tracks)
 
         html_content = f"""<!DOCTYPE html>
 <html lang="ca">
@@ -183,8 +187,6 @@ class AulaPlanStorage:
 
         for r in range(model.rows):
             for c in range(model.cols):
-                if aisle_col > 0 and c == aisle_col:
-                    html_content += '    <div class="aisle"></div>\n'
                 student_name = model.grid.get((r, c), "")
                 status_markup = ""
                 if model.show_computer_status:
@@ -206,6 +208,8 @@ class AulaPlanStorage:
                     html_content += f"""    <div class="desk">
 {header}        <span class="empty">[ Buit ]</span>
     </div>\n"""
+                if c + 1 in aisle_positions:
+                    html_content += '    <div class="aisle"></div>\n'
 
         html_content += """    </div>
 </body>

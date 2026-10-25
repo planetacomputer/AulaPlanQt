@@ -36,6 +36,30 @@ def test_resize_removes_out_of_bounds_seats_and_statuses():
     assert model.computer_working == {}
 
 
+def test_aisle_count_is_distributed_and_respects_one_per_column_gap():
+    model = AulaPlanModel(rows=2, cols=8)
+
+    model.set_grid_size(2, 8, 2)
+
+    assert model.vertical_aisles == [2, 5]
+    model.set_grid_size(2, 8, 7)
+    assert model.vertical_aisles == list(range(1, 8))
+
+
+def test_aisles_can_move_between_gaps_and_support_undo_redo():
+    model = AulaPlanModel(rows=1, cols=6, vertical_aisles=[1, 4])
+
+    assert model.move_vertical_aisle(1, 2)
+    assert model.vertical_aisles == [2, 4]
+    assert not model.move_vertical_aisle(2, 4)
+    assert not model.move_vertical_aisle(2, 0)
+
+    assert model.undo()
+    assert model.vertical_aisles == [1, 4]
+    assert model.redo()
+    assert model.vertical_aisles == [2, 4]
+
+
 def test_rename_student_updates_seat_and_supports_undo_redo():
     model = AulaPlanModel(rows=1, cols=1)
     model.add_student("Ada")
@@ -92,4 +116,3 @@ def test_clear_all_seats_supports_undo():
     assert model.grid == {}
     assert model.undo()
     assert model.grid == {(0, 0): "Ada"}
-

@@ -12,7 +12,7 @@
   - Targetes de seient grans i llegibles amb identificació de fila i columna (ex: `F1-C2`).
   - Indicació clara dels seients ocupats i lliures.
   - Casella de selecció a cada seient per indicar si l'ordinador funciona.
-  - Opció **Mostrar estat ordinadors** per ocultar o mostrar els indicadors sense modificar-ne l'estat; també s'aplica a les exportacions HTML i SVG.
+  - Opció **Mostra l'estat dels ordinadors** per ocultar o mostrar els indicadors sense modificar-ne l'estat; també s'aplica a les exportacions HTML i SVG.
 
 - **Funció Arrossegar i Soltar (*Drag & Drop*)**:
   - Assigna alumnes des de la llista lateral cap a qualsevol seient buit.
@@ -21,11 +21,13 @@
 
 - **Gestió d'Alumnes**: Fes doble clic sobre un alumne a la llista lateral per canviar-ne el nom. Els canvis també s'apliquen al seient assignat i es poden desfer.
 
-- **Control del Passadís Vertical**: Permet activar i personalitzar un passadís vertical a la graella de l'aula. Des del fitxer de configuració es pot indicar la seva posició entre les columnes. 
+- **Guia ràpida**: Prem el botó **Guia ràpida**, amb la icona d'informació i situat a la dreta de **Mostra l'estat dels ordinadors**, per consultar les instruccions d'ús dins de l'aplicació.
+
+- **Passadissos verticals**: Indica'n el nombre amb el control **Passadissos** (fins a un per separació entre columnes). Es col·loquen inicialment de manera uniforme i es poden arrossegar a una altra separació. Les posicions es desen al JSON i es respecten a les exportacions HTML i SVG.
 
 - **Configuració Dinàmica de la Graella**:
   - Nombre personalitzable de files i columnes (de 1 a 10).
-  - **Passadís Vertical Ajustable**: Opció per afegir un passadís central o personalitzat (`vertical_aisle_after`), al fitxer de configuració, per dividir blocs de taules.
+  - Els passadissos es poden col·locar entre les columnes per dividir blocs de taules.
 
   - **Gestió Multi-selecció d'Alumnes**: Selecció múltiple d'alumnes a la llista lateral (fent servir Ctrl o Shift) per eliminar diversos registres a la vegada, amb diàleg de confirmació prèvia.
 

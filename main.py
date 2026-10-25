@@ -1,12 +1,13 @@
 import sys
 from pathlib import Path
-from PyQt6.QtCore import Qt, QMimeData
-from PyQt6.QtGui import QDrag, QFont, QFontMetricsF, QIcon, QPainter, QPixmap
+from PyQt6.QtCore import Qt, QEvent, QItemSelectionModel, QMimeData
+from PyQt6.QtGui import QBrush, QDrag, QFont, QFontMetricsF, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QGridLayout, QPushButton, QLineEdit, QListWidget, QListWidgetItem,
     QSpinBox, QLabel, QCheckBox, QFileDialog, QMessageBox, QSplitter,
-    QScrollArea, QFrame, QAbstractItemView, QInputDialog
+    QScrollArea, QFrame, QAbstractItemView, QInputDialog, QDialog,
+    QDialogButtonBox, QTextBrowser, QStyle
 )
 from model import AulaPlanModel
 from storage import AulaPlanStorage
@@ -19,6 +20,20 @@ class DraggableListWidget(QListWidget):
             mime.setText(items[0].data(Qt.ItemDataRole.UserRole))
         return mime
 
+    def selectionCommand(self, index, event=None):
+        if event is None:
+            return super().selectionCommand(index, event)
+        if event.type() == QEvent.Type.MouseMove:
+            return QItemSelectionModel.SelectionFlag.NoUpdate
+
+        modifiers = event.modifiers()
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            return super().selectionCommand(index, event)
+        return (
+            QItemSelectionModel.SelectionFlag.ClearAndSelect
+            | QItemSelectionModel.SelectionFlag.Current
+        )
+
 
 class LeftPanelWidget(QWidget):
     """Panell esquerre adaptat per acceptar alumnes arrossegats des de la classe i desassignar-los"""
@@ -28,17 +43,51 @@ class LeftPanelWidget(QWidget):
         self.setAcceptDrops(True)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasText() and event.mimeData().text().startswith("seat:"):
+        if event.mimeData().hasText() and event.mimeData().text().startswith(
+            ("seat:", "seats:")
+        ):
             event.acceptProposedAction()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasText() and event.mimeData().text().startswith("seat:"):
+        if event.mimeData().hasText() and event.mimeData().text().startswith(
+            ("seat:", "seats:")
+        ):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
         text = event.mimeData().text()
         event.acceptProposedAction()
         self.main_window.handle_unseat_drop(text)
+
+
+class SeatComputerCheckBox(QCheckBox):
+    def __init__(self, student_name, main_window, parent=None):
+        super().__init__(parent)
+        self.student_name = student_name
+        self.main_window = main_window
+        self._selecting_seat = False
+
+    def mousePressEvent(self, event):
+        if (
+            self.student_name
+            and event.button() == Qt.MouseButton.LeftButton
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            self.main_window.select_student_from_seat(
+                self.student_name,
+                event.modifiers(),
+            )
+            self._selecting_seat = True
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._selecting_seat:
+            self._selecting_seat = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class SeatFrame(QFrame):
@@ -48,28 +97,117 @@ class SeatFrame(QFrame):
         self.seat_pos = pos
         self.student_name = student_name
         self.main_window = main_window
+        self._press_position = None
+        self._press_modifiers = Qt.KeyboardModifier.NoModifier
+        self._drag_started = False
         self.setAcceptDrops(True)
         if self.student_name:
             self.setCursor(Qt.CursorShape.OpenHandCursor)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasText():
+        if self.main_window.accepts_drop(event.mimeData()):
             event.acceptProposedAction()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasText():
+        if self.main_window.accepts_drop(event.mimeData()):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
         text = event.mimeData().text()
         event.acceptProposedAction()
-        self.main_window.handle_drop(text, self.seat_pos)
+        target_pos = self.seat_pos
+        if text.startswith("aisle:"):
+            target_pos = (
+                self.seat_pos[1]
+                if event.position().x() < self.width() / 2
+                else self.seat_pos[1] + 1
+            )
+        self.main_window.handle_drop(text, target_pos)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.student_name:
+            self._press_position = event.position().toPoint()
+            self._press_modifiers = event.modifiers()
+            self._drag_started = False
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            self._press_position is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+            and (event.position().toPoint() - self._press_position).manhattanLength()
+            >= QApplication.startDragDistance()
+        ):
+            self._drag_started = True
+            selected_students = {
+                item.data(Qt.ItemDataRole.UserRole)
+                for item in self.main_window.listbox_students.selectedItems()
+            }
+            if self.student_name not in selected_students:
+                self.main_window.select_student_from_seat(
+                    self.student_name,
+                    self._press_modifiers,
+                )
+                selected_students = {
+                    item.data(Qt.ItemDataRole.UserRole)
+                    for item in self.main_window.listbox_students.selectedItems()
+                }
+
+            selected_positions = sorted(
+                pos
+                for pos, name in self.main_window.model.grid.items()
+                if name in selected_students
+            )
             drag = QDrag(self)
             mime = QMimeData()
-            mime.setText(f"seat:{self.seat_pos[0]},{self.seat_pos[1]}:{self.student_name}")
+            if len(selected_positions) > 1:
+                positions = ";".join(
+                    f"{row},{col}" for row, col in selected_positions
+                )
+                mime.setText(f"seats:{positions}")
+            else:
+                mime.setText(
+                    f"seat:{self.seat_pos[0]},{self.seat_pos[1]}:{self.student_name}"
+                )
+            drag.setMimeData(mime)
+            drag.exec(Qt.DropAction.MoveAction)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.student_name:
+            if not self._drag_started:
+                self.main_window.select_student_from_seat(
+                    self.student_name,
+                    self._press_modifiers,
+                )
+            self._press_position = None
+            self._press_modifiers = Qt.KeyboardModifier.NoModifier
+            self._drag_started = False
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+
+class AisleHandle(QLabel):
+    def __init__(self, position, rows, main_window, parent=None):
+        super().__init__("\n".join("│" for _ in range(rows)), parent)
+        self.position = position
+        self.main_window = main_window
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet("color: #999; font-size: 24pt;")
+        self.setToolTip("Arrossega el passadís a una altra separació entre columnes")
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setAcceptDrops(False)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            drag = QDrag(self)
+            mime = QMimeData()
+            mime.setText(f"aisle:{self.position}")
             drag.setMimeData(mime)
             drag.exec(Qt.DropAction.MoveAction)
         else:
@@ -107,17 +245,18 @@ class AulaPlanWindow(QMainWindow):
             # Bloquegem senyals per evitar rescriure el model amb valors per defecte
             self.spin_rows.blockSignals(True)
             self.spin_cols.blockSignals(True)
-            self.chk_aisle.blockSignals(True)
+            self.spin_aisles.blockSignals(True)
             self.chk_computer_status.blockSignals(True)
 
             self.spin_rows.setValue(self.model.rows)
             self.spin_cols.setValue(self.model.cols)
-            self.chk_aisle.setChecked(self.model.vertical_aisle_after > 0)
+            self.spin_aisles.setMaximum(max(self.model.cols - 1, 0))
+            self.spin_aisles.setValue(len(self.model.vertical_aisles))
             self.chk_computer_status.setChecked(self.model.show_computer_status)
 
             self.spin_rows.blockSignals(False)
             self.spin_cols.blockSignals(False)
-            self.chk_aisle.blockSignals(False)
+            self.spin_aisles.blockSignals(False)
             self.chk_computer_status.blockSignals(False)
 
             self.refresh_ui()
@@ -153,14 +292,28 @@ class AulaPlanWindow(QMainWindow):
         self.spin_cols.valueChanged.connect(self.update_grid_config)
         toolbar.addWidget(self.spin_cols)
 
-        self.chk_aisle = QCheckBox("Passadís Vertical")
-        self.chk_aisle.stateChanged.connect(self.update_grid_config)
-        toolbar.addWidget(self.chk_aisle)
+        toolbar.addWidget(QLabel("Passadissos:"))
+        self.spin_aisles = QSpinBox()
+        self.spin_aisles.setRange(0, self.model.cols - 1)
+        self.spin_aisles.setToolTip(
+            "Nombre de passadissos verticals; arrossega'ls per canviar-ne la posició"
+        )
+        self.spin_aisles.valueChanged.connect(self.update_grid_config)
+        toolbar.addWidget(self.spin_aisles)
 
-        self.chk_computer_status = QCheckBox("Mostrar estado ordenadores")
+        self.chk_computer_status = QCheckBox("Mostra l'estat dels ordinadors")
         self.chk_computer_status.setChecked(self.model.show_computer_status)
         self.chk_computer_status.toggled.connect(self.toggle_computer_status_visibility)
         toolbar.addWidget(self.chk_computer_status)
+
+        btn_help = QPushButton("Guia ràpida")
+        btn_help.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation)
+        )
+        btn_help.setToolTip("Obre la guia ràpida")
+        btn_help.setAccessibleName("Guia ràpida")
+        btn_help.clicked.connect(self.show_quick_guide)
+        toolbar.addWidget(btn_help)
 
         toolbar.addStretch()
 
@@ -214,6 +367,9 @@ class AulaPlanWindow(QMainWindow):
         self.listbox_students.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.listbox_students.setStyleSheet("font-size: 14pt;")
         self.listbox_students.itemDoubleClicked.connect(self.rename_student)
+        self.listbox_students.itemSelectionChanged.connect(
+            self.on_student_selection_changed
+        )
         left_layout.addWidget(self.listbox_students)
 
         btn_remove = QPushButton("Eliminar Seleccionats")
@@ -247,24 +403,100 @@ class AulaPlanWindow(QMainWindow):
 
         self.refresh_ui()
 
-    def refresh_ui(self):
-        self.filter_students()
+    def show_quick_guide(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Guia ràpida d'AulaPlan")
+        dialog.resize(640, 560)
+
+        layout = QVBoxLayout(dialog)
+        guide = QTextBrowser(dialog)
+        guide.setOpenExternalLinks(False)
+        guide.setHtml("""
+            <h1>Guia ràpida d'AulaPlan</h1>
+            <p>Organitzeu l'aula, assigneu alumnes i indiqueu l'estat
+            dels ordinadors des d'una sola pantalla.</p>
+
+            <h2>Alumnes</h2>
+            <ul>
+                <li>Escriviu un nom al camp de l'esquerra i premeu
+                <b>+</b> o <i>Retorn</i> per afegir-lo.</li>
+                <li>Feu doble clic sobre un alumne per editar-ne el nom.
+                El canvi també es reflecteix al seu seient.</li>
+                <li>Seleccioneu un o diversos alumnes i premeu
+                <b>Eliminar Seleccionats</b> per eliminar-los. Els seients
+                dels alumnes seleccionats queden ressaltats.</li>
+            </ul>
+
+            <h2>Seients</h2>
+            <ul>
+                <li>Arrossegueu un alumne de la llista fins a un seient lliure.</li>
+                <li>Feu clic sobre un seient per seleccionar l'alumne.
+                Feu Ctrl+clic a la llista o als seients per afegir o treure
+                alumnes de la selecció; és l'única manera de fer una
+                multiselecció. Arrossegueu qualsevol seient seleccionat fins
+                al panell esquerre per desassignar tots els seients
+                seleccionats alhora.</li>
+                <li>Arrossegueu un alumne d'un seient a un altre per moure'l
+                o intercanviar-lo.</li>
+                <li>Arrossegueu un alumne des del seu seient fins al panell de
+                l'esquerra per deixar-lo sense assignar.</li>
+                <li>Feu servir els controls <b>Files</b>, <b>Cols</b> i
+                <b>Passadissos</b> per configurar la graella. Arrossegueu un
+                passadís vertical fins a una altra separació entre columnes
+                per canviar-ne la posició. Es pot col·locar com a màxim un
+                passadís a cada separació.</li>
+            </ul>
+
+            <h2>Estat dels ordinadors</h2>
+            <ul>
+                <li>Premeu l'indicador de cada seient per alternar entre
+                <span style="color:#16803a"><b>✓ funciona</b></span> i
+                <span style="color:#d32f2f"><b>✗ no funciona</b></span>.</li>
+                <li>Desmarqueu <b>Mostra l'estat dels ordinadors</b> per amagar
+                els indicadors sense canviar-ne l'estat. També s'amaguen
+                a les exportacions HTML i SVG.</li>
+            </ul>
+
+            <h2>Desar, carregar i exportar</h2>
+            <ul>
+                <li><b>Importar CSV</b> carrega alumnes des d'un fitxer CSV.</li>
+                <li><b>Desar JSON</b> i <b>Carregar JSON</b> desen i recuperen
+                la distribució i l'estat dels ordinadors.</li>
+                <li><b>Exportar HTML</b> crea una pàgina imprimible i
+                <b>Exportar SVG</b> crea un gràfic vectorial.</li>
+            </ul>
+
+            <h2>Desfer i refer</h2>
+            <p>Feu servir <b>Desfer</b> i <b>Refer</b> per desfer o recuperar canvis.</p>
+        """)
+        layout.addWidget(guide)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dialog)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
+
+    def refresh_ui(self, refresh_students=True):
+        if refresh_students:
+            self.filter_students()
 
         while self.grid_layout.count():
             item = self.grid_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        aisle_col = self.model.vertical_aisle_after if self.chk_aisle.isChecked() else 0
+        aisle_positions = self.model.vertical_aisles
+        selected_students = {
+            item.data(Qt.ItemDataRole.UserRole)
+            for item in self.listbox_students.selectedItems()
+        }
 
         for r in range(self.model.rows):
             for c in range(self.model.cols):
-                visual_c = c
-                if aisle_col > 0 and c >= aisle_col:
-                    visual_c = c + 1
+                visual_c = c + sum(position <= c for position in aisle_positions)
 
                 student_name = self.model.grid.get((r, c), "")
-                is_highlighted = (student_name and student_name == self.highlighted_student)
+                is_highlighted = student_name in selected_students
 
                 bg_color = "#2196f3" if is_highlighted else ("#e1f5fe" if student_name else "#f5f5f5")
                 border_color = "#0d47a1" if is_highlighted else ("#90caf9" if student_name else "#cccccc")
@@ -284,11 +516,16 @@ class AulaPlanWindow(QMainWindow):
                 header_layout = QHBoxLayout()
                 header_layout.setContentsMargins(2, 0, 2, 0)
                 lbl_pos = QLabel(f"F{r+1}-C{c+1}")
+                lbl_pos.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
                 lbl_pos.setStyleSheet(f"color: {'white' if is_highlighted else '#777'}; font-weight: bold; border: none; background: transparent;")
                 header_layout.addWidget(lbl_pos)
 
                 computer_working = self.model.computer_working.get((r, c), True)
-                chk_computer = QCheckBox("✓" if computer_working else "✗")
+                chk_computer = SeatComputerCheckBox(
+                    student_name,
+                    self,
+                )
+                chk_computer.setText("✓" if computer_working else "✗")
                 chk_computer.setVisible(self.model.show_computer_status)
                 chk_computer.setChecked(computer_working)
                 chk_computer.setToolTip("Marca si l'ordinador funciona")
@@ -312,6 +549,7 @@ class AulaPlanWindow(QMainWindow):
                 cell_layout.addLayout(header_layout)
 
                 lbl_name = QLabel(student_name if student_name else "[ Buit ]")
+                lbl_name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
                 lbl_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 name_font = QFont()
                 name_font.setPointSize(18)
@@ -333,12 +571,16 @@ class AulaPlanWindow(QMainWindow):
 
                 self.grid_layout.addWidget(cell, r, visual_c)
 
-        if aisle_col > 0:
-            for r in range(self.model.rows):
-                aisle_lbl = QLabel("│ │")
-                aisle_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                aisle_lbl.setStyleSheet("color: #ccc; font-size: 24pt;")
-                self.grid_layout.addWidget(aisle_lbl, r, aisle_col)
+        for index, position in enumerate(aisle_positions):
+            visual_c = position + index
+            aisle_handle = AisleHandle(position, self.model.rows, self)
+            self.grid_layout.addWidget(
+                aisle_handle,
+                0,
+                visual_c,
+                self.model.rows,
+                1,
+            )
 
     def set_computer_status(self, pos, checkbox, working):
         self.model.set_computer_working(pos, working)
@@ -348,36 +590,140 @@ class AulaPlanWindow(QMainWindow):
         self.model.show_computer_status = visible
         self.refresh_ui()
 
+    def accepts_drop(self, mime_data):
+        if not mime_data.hasText():
+            return False
+        text = mime_data.text()
+        return (
+            text.startswith("seat:")
+            or text.startswith("aisle:")
+            or text in self.model.students
+        )
+
     def filter_students(self):
         query = self.entry_student.text().lower()
-        self.listbox_students.clear()
-        seated_students = set(self.model.grid.values())
-
-        filtered = [name for name in self.model.students if query in name.lower()]
-        def surname_sort_key(name):
-            parts = name.split()
-            second_part = parts[1] if len(parts) > 1 else name
-            return second_part.casefold(), name.casefold()
-
-        unseated_list = sorted(
-            (name for name in filtered if name not in seated_students),
-            key=surname_sort_key,
+        selected_names = {
+            item.data(Qt.ItemDataRole.UserRole)
+            for item in self.listbox_students.selectedItems()
+        }
+        current_item = self.listbox_students.currentItem()
+        current_name = (
+            current_item.data(Qt.ItemDataRole.UserRole)
+            if current_item
+            else None
         )
-        seated_list = sorted(
-            (name for name in filtered if name in seated_students),
-            key=surname_sort_key,
+        signals_were_blocked = self.listbox_students.blockSignals(True)
+        try:
+            self.listbox_students.clear()
+            seated_students = set(self.model.grid.values())
+
+            filtered = [name for name in self.model.students if query in name.lower()]
+
+            def surname_sort_key(name):
+                parts = name.split()
+                second_part = parts[1] if len(parts) > 1 else name
+                return second_part.casefold(), name.casefold()
+
+            unseated_list = sorted(
+                (name for name in filtered if name not in seated_students),
+                key=surname_sort_key,
+            )
+            seated_list = sorted(
+                (name for name in filtered if name in seated_students),
+                key=surname_sort_key,
+            )
+
+            for name in unseated_list + seated_list:
+                status_icon = "☑" if name in seated_students else "☐"
+                item = QListWidgetItem(f"{status_icon}  {name}")
+                item.setData(Qt.ItemDataRole.UserRole, name)
+                if name == self.highlighted_student:
+                    item.setBackground(Qt.GlobalColor.blue)
+                self.listbox_students.addItem(item)
+                if name in selected_names:
+                    item.setSelected(True)
+                if name == current_name:
+                    self.listbox_students.setCurrentItem(
+                        item,
+                        QItemSelectionModel.SelectionFlag.NoUpdate,
+                    )
+        finally:
+            self.listbox_students.blockSignals(signals_were_blocked)
+
+    def on_student_selection_changed(self):
+        selected_items = self.listbox_students.selectedItems()
+        current_item = self.listbox_students.currentItem()
+        if current_item not in selected_items:
+            current_item = selected_items[-1] if selected_items else None
+
+        selected_student = (
+            current_item.data(Qt.ItemDataRole.UserRole)
+            if current_item
+            else None
         )
-        
-        for name in unseated_list + seated_list:
-            status_icon = "☑" if name in seated_students else "☐"
-            item = QListWidgetItem(f"{status_icon}  {name}")
-            item.setData(Qt.ItemDataRole.UserRole, name)
-            if name == self.highlighted_student:
+        previous_student = self.highlighted_student
+        self.highlighted_student = selected_student
+        for index in range(self.listbox_students.count()):
+            item = self.listbox_students.item(index)
+            name = item.data(Qt.ItemDataRole.UserRole)
+            if name == previous_student:
+                item.setBackground(QBrush())
+            if name == selected_student:
                 item.setBackground(Qt.GlobalColor.blue)
-            self.listbox_students.addItem(item)
+        self.refresh_ui(refresh_students=False)
+
+    def select_student_from_seat(
+        self,
+        student_name,
+        modifiers=Qt.KeyboardModifier.NoModifier,
+    ):
+        item = next(
+            (
+                self.listbox_students.item(index)
+                for index in range(self.listbox_students.count())
+                if self.listbox_students.item(index).data(
+                    Qt.ItemDataRole.UserRole
+                ) == student_name
+            ),
+            None,
+        )
+        if item is None and student_name in self.model.students:
+            self.entry_student.clear()
+            item = next(
+                (
+                    self.listbox_students.item(index)
+                    for index in range(self.listbox_students.count())
+                    if self.listbox_students.item(index).data(
+                        Qt.ItemDataRole.UserRole
+                    ) == student_name
+                ),
+                None,
+            )
+
+        if item is not None:
+            if modifiers & Qt.KeyboardModifier.ControlModifier:
+                selection_command = (
+                    QItemSelectionModel.SelectionFlag.Toggle
+                    | QItemSelectionModel.SelectionFlag.Current
+                )
+            else:
+                selection_command = (
+                    QItemSelectionModel.SelectionFlag.ClearAndSelect
+                    | QItemSelectionModel.SelectionFlag.Current
+                )
+
+            signals_were_blocked = self.listbox_students.blockSignals(True)
+            try:
+                self.listbox_students.setCurrentItem(item, selection_command)
+            finally:
+                self.listbox_students.blockSignals(signals_were_blocked)
+            self.on_student_selection_changed()
 
     def handle_drop(self, mime_text, target_pos):
-        if mime_text.startswith("seat:"):
+        if mime_text.startswith("aisle:"):
+            source_position = int(mime_text.split(":", 1)[1])
+            self.move_vertical_aisle(source_position, target_pos)
+        elif mime_text.startswith("seat:"):
             parts = mime_text.split(":", 2)
             coords = parts[1].split(",")
             src_pos = (int(coords[0]), int(coords[1]))
@@ -403,7 +749,19 @@ class AulaPlanWindow(QMainWindow):
             self.refresh_ui()
 
     def handle_unseat_drop(self, mime_text):
-        if mime_text.startswith("seat:"):
+        if mime_text.startswith("seats:"):
+            positions = [
+                tuple(map(int, coords.split(",")))
+                for coords in mime_text.split(":", 1)[1].split(";")
+                if coords
+            ]
+            positions = [pos for pos in positions if pos in self.model.grid]
+            if positions:
+                self.model.save_state()
+                for pos in positions:
+                    del self.model.grid[pos]
+                self.refresh_ui()
+        elif mime_text.startswith("seat:"):
             parts = mime_text.split(":", 2)
             coords = parts[1].split(",")
             src_pos = (int(coords[0]), int(coords[1]))
@@ -497,26 +855,47 @@ class AulaPlanWindow(QMainWindow):
     def update_grid_config(self):
         r = self.spin_rows.value()
         c = self.spin_cols.value()
-        aisle_active = self.chk_aisle.isChecked()
-        aisle_pos = (c // 2 if c > 1 else 1) if aisle_active else 0
-        self.model.set_grid_size(r, c, aisle_pos)
+        self.spin_aisles.blockSignals(True)
+        self.spin_aisles.setMaximum(max(c - 1, 0))
+        aisle_count = self.spin_aisles.value()
+        self.spin_aisles.blockSignals(False)
+        self.model.set_grid_size(r, c, aisle_count)
         self.refresh_ui()
+
+    def move_vertical_aisle(self, source_position, target_position):
+        if self.model.move_vertical_aisle(source_position, target_position):
+            self.refresh_ui()
 
     def undo(self):
         if self.model.undo():
-            self.spin_rows.setValue(self.model.rows)
-            self.spin_cols.setValue(self.model.cols)
-            self.chk_aisle.setChecked(self.model.vertical_aisle_after > 0)
-            self.chk_computer_status.setChecked(self.model.show_computer_status)
+            self.update_controls_from_model()
             self.refresh_ui()
 
     def redo(self):
         if self.model.redo():
-            self.spin_rows.setValue(self.model.rows)
-            self.spin_cols.setValue(self.model.cols)
-            self.chk_aisle.setChecked(self.model.vertical_aisle_after > 0)
-            self.chk_computer_status.setChecked(self.model.show_computer_status)
+            self.update_controls_from_model()
             self.refresh_ui()
+
+    def update_controls_from_model(self):
+        for control in (
+            self.spin_rows,
+            self.spin_cols,
+            self.spin_aisles,
+            self.chk_computer_status,
+        ):
+            control.blockSignals(True)
+        self.spin_rows.setValue(self.model.rows)
+        self.spin_cols.setValue(self.model.cols)
+        self.spin_aisles.setMaximum(max(self.model.cols - 1, 0))
+        self.spin_aisles.setValue(len(self.model.vertical_aisles))
+        self.chk_computer_status.setChecked(self.model.show_computer_status)
+        for control in (
+            self.spin_rows,
+            self.spin_cols,
+            self.spin_aisles,
+            self.chk_computer_status,
+        ):
+            control.blockSignals(False)
 
     def import_csv(self):
         path, _ = QFileDialog.getOpenFileName(self, "Importar CSV", "", "Fitxers CSV (*.csv)")
@@ -553,17 +932,18 @@ class AulaPlanWindow(QMainWindow):
             # Bloquegem senyals aquí també
             self.spin_rows.blockSignals(True)
             self.spin_cols.blockSignals(True)
-            self.chk_aisle.blockSignals(True)
+            self.spin_aisles.blockSignals(True)
             self.chk_computer_status.blockSignals(True)
 
             self.spin_rows.setValue(self.model.rows)
             self.spin_cols.setValue(self.model.cols)
-            self.chk_aisle.setChecked(self.model.vertical_aisle_after > 0)
+            self.spin_aisles.setMaximum(max(self.model.cols - 1, 0))
+            self.spin_aisles.setValue(len(self.model.vertical_aisles))
             self.chk_computer_status.setChecked(self.model.show_computer_status)
 
             self.spin_rows.blockSignals(False)
             self.spin_cols.blockSignals(False)
-            self.chk_aisle.blockSignals(False)
+            self.spin_aisles.blockSignals(False)
             self.chk_computer_status.blockSignals(False)
 
             self.refresh_ui()

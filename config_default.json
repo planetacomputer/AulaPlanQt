@@ -1,7 +1,11 @@
 {
     "rows": 4,
     "cols": 8,
-    "vertical_aisle_after": 4,
+    "vertical_aisles": [
+        2,
+        6
+    ],
+    "show_computer_status": true,
     "students": [
         "Marc Rovira",
         "Núria Puig",
@@ -49,7 +53,6 @@
         "0,5": "Clara Pons",
         "2,6": "Elena Torrents",
         "2,3": "Laia Soler",
-        "0,2": "Carla Rovira",
         "2,2": "David Pérez",
         "1,5": "Pol Pascual",
         "0,4": "Marc Valls",
@@ -62,7 +65,8 @@
         "1,0": "Marc Esteve",
         "1,7": "Josep Horta",
         "1,4": "Joan Ribas",
-        "1,1": "Gerard Martí"
+        "1,1": "Gerard Martí",
+        "0,2": "Carla Rovira"
     },
     "computer_working": {
         "0,0": true,

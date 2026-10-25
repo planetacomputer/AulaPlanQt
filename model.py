@@ -3,10 +3,12 @@ import random
 
 class AulaPlanModel:
 
-    def __init__(self, rows=4, cols=4, vertical_aisle_after=0):
+    def __init__(self, rows=4, cols=4, vertical_aisle_after=0, vertical_aisles=None):
         self.rows = rows
         self.cols = cols
-        self.vertical_aisle_after = vertical_aisle_after  # 0 = sin pasillo, >0 = pasillo tras esta columna
+        if vertical_aisles is None:
+            vertical_aisles = [vertical_aisle_after] if vertical_aisle_after else []
+        self.vertical_aisles = self._normalize_aisles(vertical_aisles, cols)
         self.show_computer_status = True
         self.students = []
         self.grid = {}  # (row, col) -> student_name
@@ -14,11 +16,38 @@ class AulaPlanModel:
         self.undo_stack = []
         self.redo_stack = []
 
+    @staticmethod
+    def _normalize_aisles(positions, cols):
+        return sorted({
+            int(position)
+            for position in positions
+            if 0 < int(position) < cols
+        })
+
+    @property
+    def vertical_aisle_after(self):
+        return self.vertical_aisles[0] if self.vertical_aisles else 0
+
+    @vertical_aisle_after.setter
+    def vertical_aisle_after(self, position):
+        self.vertical_aisles = self._normalize_aisles(
+            [position] if position else [],
+            self.cols,
+        )
+
+    @staticmethod
+    def _distributed_aisles(cols, count):
+        count = min(max(int(count), 0), max(cols - 1, 0))
+        return [
+            (index * cols) // (count + 1)
+            for index in range(1, count + 1)
+        ]
+
     def save_state(self):
         state = {
             "rows": self.rows,
             "cols": self.cols,
-            "vertical_aisle_after": self.vertical_aisle_after,
+            "vertical_aisles": list(self.vertical_aisles),
             "students": list(self.students),
             "grid": dict(self.grid),
             "computer_working": dict(self.computer_working),
@@ -32,7 +61,7 @@ class AulaPlanModel:
         current_state = {
             "rows": self.rows,
             "cols": self.cols,
-            "vertical_aisle_after": self.vertical_aisle_after,
+            "vertical_aisles": list(self.vertical_aisles),
             "students": list(self.students),
             "grid": dict(self.grid),
             "computer_working": dict(self.computer_working),
@@ -42,7 +71,12 @@ class AulaPlanModel:
         prev_state = self.undo_stack.pop()
         self.rows = prev_state["rows"]
         self.cols = prev_state["cols"]
-        self.vertical_aisle_after = prev_state.get("vertical_aisle_after", 0)
+        self.vertical_aisles = prev_state.get(
+            "vertical_aisles",
+            [prev_state["vertical_aisle_after"]]
+            if prev_state.get("vertical_aisle_after", 0)
+            else [],
+        )
         self.students = prev_state["students"]
         self.grid = prev_state["grid"]
         self.computer_working = prev_state.get("computer_working", {})
@@ -54,7 +88,7 @@ class AulaPlanModel:
         current_state = {
             "rows": self.rows,
             "cols": self.cols,
-            "vertical_aisle_after": self.vertical_aisle_after,
+            "vertical_aisles": list(self.vertical_aisles),
             "students": list(self.students),
             "grid": dict(self.grid),
             "computer_working": dict(self.computer_working),
@@ -64,17 +98,36 @@ class AulaPlanModel:
         next_state = self.redo_stack.pop()
         self.rows = next_state["rows"]
         self.cols = next_state["cols"]
-        self.vertical_aisle_after = next_state.get("vertical_aisle_after", 0)
+        self.vertical_aisles = next_state.get(
+            "vertical_aisles",
+            [next_state["vertical_aisle_after"]]
+            if next_state.get("vertical_aisle_after", 0)
+            else [],
+        )
         self.students = next_state["students"]
         self.grid = next_state["grid"]
         self.computer_working = next_state.get("computer_working", {})
         return True
 
-    def set_grid_size(self, rows, cols, vertical_aisle_after):
-        self.save_state()
+    def set_grid_size(self, rows, cols, aisle_count):
+        aisle_count = min(max(int(aisle_count), 0), max(cols - 1, 0))
+        retained_aisles = [
+            position for position in self.vertical_aisles
+            if position < cols
+        ]
+        if len(retained_aisles) != aisle_count:
+            retained_aisles = self._distributed_aisles(cols, aisle_count)
+
+        changed = (
+            self.rows != rows
+            or self.cols != cols
+            or self.vertical_aisles != retained_aisles
+        )
+        if changed:
+            self.save_state()
         self.rows = rows
         self.cols = cols
-        self.vertical_aisle_after = vertical_aisle_after
+        self.vertical_aisles = retained_aisles
         self.grid = {
             pos: name
             for pos, name in self.grid.items()
@@ -85,6 +138,22 @@ class AulaPlanModel:
             for pos, working in self.computer_working.items()
             if pos[0] < rows and pos[1] < cols
         }
+
+    def move_vertical_aisle(self, source_position, target_position):
+        if (
+            source_position not in self.vertical_aisles
+            or not 0 < target_position < self.cols
+            or target_position in self.vertical_aisles
+        ):
+            return False
+        if source_position == target_position:
+            return True
+
+        self.save_state()
+        self.vertical_aisles.remove(source_position)
+        self.vertical_aisles.append(target_position)
+        self.vertical_aisles.sort()
+        return True
 
     def set_computer_working(self, pos, working):
         working = bool(working)
