@@ -1,5 +1,8 @@
 import json
+import csv
+import re
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import pytest
 
@@ -7,9 +10,59 @@ from model import AulaPlanModel
 from storage import AulaPlanStorage
 
 
+def test_asix_config_uses_surname_initial_identifiers():
+    project_root = Path(__file__).resolve().parents[1]
+    config = json.loads(
+        (project_root / "config_default2.json").read_text(encoding="utf-8")
+    )
+    with (project_root / "alumnesASIX.csv").open(
+        encoding="utf-8-sig",
+        newline="",
+    ) as csv_file:
+        roster = list(csv.DictReader(csv_file))
+
+    expected = [
+        f"{row['Primer apellido'].strip()}, {row['Nombre'].strip()[0].upper()}."
+        for row in roster
+    ]
+    assert config["students"] == expected
+    assert set(config["grid"].values()) == set(expected)
+    assert set(config["student_photos"]).issubset(expected)
+    assert all(re.fullmatch(r".+, [A-ZÀ-Þ]\.", name) for name in expected)
+
+
+def test_default_config_full_names_follow_student_order_and_csv():
+    project_root = Path(__file__).resolve().parents[1]
+    config = json.loads(
+        (project_root / "config_default.json").read_text(encoding="utf-8")
+    )
+    with (project_root / "alumnesASIX.csv").open(
+        encoding="utf-8-sig",
+        newline="",
+    ) as csv_file:
+        roster = list(csv.DictReader(csv_file))
+
+    full_names_by_identifier = {}
+    for row in roster:
+        surname = " ".join(
+            part.strip()
+            for part in (row["Primer apellido"], row["Segundo apellido"])
+            if part.strip()
+        )
+        identifier = f"{row['Primer apellido'].strip()}, {row['Nombre'].strip()[0].upper()}."
+        full_names_by_identifier[identifier] = f"{surname}, {row['Nombre'].strip()}"
+
+    assert len(config["studentsFullname"]) == len(config["students"])
+    assert config["studentsFullname"] == [
+        full_names_by_identifier.get(student, "")
+        for student in config["students"]
+    ]
+
+
 def test_json_round_trip_preserves_class_and_computer_status(tmp_path):
     model = AulaPlanModel(rows=1, cols=4, vertical_aisles=[1, 3])
     model.add_student("Ada")
+    model.student_full_names["Ada"] = "Lovelace, Ada"
     model.assign_unseated("Ada", (0, 0))
     model.set_computer_working((0, 1), False)
     model.show_computer_status = False
@@ -32,6 +85,7 @@ def test_json_round_trip_preserves_class_and_computer_status(tmp_path):
     assert loaded.cols == 4
     assert loaded.vertical_aisles == [1, 3]
     assert loaded.students == ["Ada"]
+    assert loaded.student_full_names == {"Ada": "Lovelace, Ada"}
     assert loaded.grid == {(0, 0): "Ada"}
     assert loaded.computer_working == {
         (0, 0): True,
@@ -40,6 +94,31 @@ def test_json_round_trip_preserves_class_and_computer_status(tmp_path):
         (0, 3): True,
     }
     assert loaded.show_computer_status is False
+
+
+def test_loading_json_resolves_relative_student_photo_paths(tmp_path):
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    photo = images_dir / "ada.jpg"
+    photo.write_bytes(b"image")
+    json_path = tmp_path / "class.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "rows": 1,
+                "cols": 1,
+                "students": ["Ada"],
+                "grid": {},
+                "student_photos": {"Ada": "images/ada.jpg"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    model = AulaPlanModel()
+
+    AulaPlanStorage.load_json(json_path, model)
+
+    assert model.student_photos == {"Ada": str(photo.resolve())}
 
 
 def test_loading_legacy_json_defaults_computer_status_to_visible_and_working(

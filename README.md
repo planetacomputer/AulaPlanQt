@@ -19,7 +19,7 @@
   - Intercanvia alumnes de posició arrossegant-los entre seients.
   - Desassigna un alumne arrossegant-lo des del seu seient de tornada a la llista lateral.
 
-- **Gestió d'Alumnes**: Fes doble clic sobre un alumne a la llista lateral per canviar-ne el nom. Els canvis també s'apliquen al seient assignat i es poden desfer.
+- **Gestió d'Alumnes**: La llista lateral mostra primer els alumnes no assignats i després els assignats; cada grup s'ordena alfabèticament pel cognom. Fes doble clic sobre un alumne per canviar-ne el nom; el canvi també s'aplica al seient assignat i es pot desfer. Pots eliminar la foto assignada amb el botó del costat; el fitxer d'imatge es conserva.
 
 - **Guia ràpida**: Prem el botó **Guia ràpida**, amb la icona d'informació i situat a la dreta de **Mostra l'estat dels ordinadors**, per consultar les instruccions d'ús dins de l'aplicació.
 
@@ -175,4 +175,5 @@ a l'ordinador on s'executin.
 - `model.py`: model de dades de l'aula i dels alumnes.
 - `storage.py`: importació i exportació de dades i plans.
 - `config_default.json`: configuració inicial carregada en iniciar l'aplicació.
+- `config_default2.json`: configuració del grup ASIX amb els noms en format `Primer cognom, N.`; carregueu-la amb **Carregar JSON** i manteniu la carpeta local `images/` al costat del fitxer per mostrar les fotografies i la identificació sota cadascuna.
 - `package_linux.sh`: script per empaquetar l'aplicació a Linux.

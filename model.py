@@ -15,6 +15,7 @@ class AulaPlanModel:
         self.grid = {}  # (row, col) -> student_name
         self.computer_working = {}  # (row, col) -> bool; missing entries default to working
         self.student_photos = {}  # student_name -> str path to photo file
+        self.student_full_names = {}  # student_name -> surname(s), given name
         self.undo_stack = []
         self.redo_stack = []
 
@@ -54,6 +55,7 @@ class AulaPlanModel:
             "grid": dict(self.grid),
             "computer_working": dict(self.computer_working),
             "student_photos": dict(self.student_photos),
+            "student_full_names": dict(self.student_full_names),
         }
         self.undo_stack.append(state)
         self.redo_stack.clear()
@@ -69,6 +71,7 @@ class AulaPlanModel:
             "grid": dict(self.grid),
             "computer_working": dict(self.computer_working),
             "student_photos": dict(self.student_photos),
+            "student_full_names": dict(self.student_full_names),
         }
         self.redo_stack.append(current_state)
 
@@ -85,6 +88,7 @@ class AulaPlanModel:
         self.grid = prev_state["grid"]
         self.computer_working = prev_state.get("computer_working", {})
         self.student_photos = prev_state.get("student_photos", {})
+        self.student_full_names = prev_state.get("student_full_names", {})
         return True
 
     def redo(self):
@@ -98,6 +102,7 @@ class AulaPlanModel:
             "grid": dict(self.grid),
             "computer_working": dict(self.computer_working),
             "student_photos": dict(self.student_photos),
+            "student_full_names": dict(self.student_full_names),
         }
         self.undo_stack.append(current_state)
 
@@ -114,6 +119,7 @@ class AulaPlanModel:
         self.grid = next_state["grid"]
         self.computer_working = next_state.get("computer_working", {})
         self.student_photos = next_state.get("student_photos", {})
+        self.student_full_names = next_state.get("student_full_names", {})
         return True
 
     def set_grid_size(self, rows, cols, aisle_count):
@@ -201,13 +207,12 @@ class AulaPlanModel:
         return True
 
     def clear_student_photo(self, student_name):
-        if student_name in self.student_photos:
-            photo_path = Path(self.student_photos[student_name])
-            if photo_path.exists():
-                photo_path.unlink(missing_ok=True)
-            del self.student_photos[student_name]
-            return True
-        return False
+        if student_name not in self.student_photos:
+            return False
+
+        self.save_state()
+        del self.student_photos[student_name]
+        return True
 
     def remove_student(self, name):
         if name in self.students:
@@ -216,7 +221,8 @@ class AulaPlanModel:
             self.grid = {
                 pos: st for pos, st in self.grid.items() if st != name
             }
-            self.clear_student_photo(name)
+            self.student_photos.pop(name, None)
+            self.student_full_names.pop(name, None)
             return True
         return False
 
@@ -238,6 +244,9 @@ class AulaPlanModel:
         if old_name in self.student_photos:
             photo_path = self.student_photos.pop(old_name)
             self.student_photos[new_name] = photo_path
+        if old_name in self.student_full_names:
+            full_name = self.student_full_names.pop(old_name)
+            self.student_full_names[new_name] = full_name
         return True
 
     def move_or_swap(self, src_pos, dst_pos):

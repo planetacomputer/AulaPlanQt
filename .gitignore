@@ -37,3 +37,4 @@ fotos*
 
 #config
 config_default*
+!config_default2.json

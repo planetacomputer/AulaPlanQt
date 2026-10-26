@@ -1,7 +1,11 @@
 import sys
+import unicodedata
 from pathlib import Path
-from PyQt6.QtCore import Qt, QEvent, QItemSelectionModel, QMimeData
-from PyQt6.QtGui import QBrush, QDrag, QFont, QFontMetricsF, QIcon, QPainter, QPixmap
+from PyQt6.QtCore import Qt, QEvent, QItemSelectionModel, QMimeData, QSize
+from PyQt6.QtGui import (
+    QBrush, QColor, QDrag, QFont, QFontMetricsF, QIcon, QPainter,
+    QPainterPath, QPixmap,
+)
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QGridLayout, QPushButton, QLineEdit, QListWidget, QListWidgetItem,
@@ -11,6 +15,72 @@ from PyQt6.QtWidgets import (
 )
 from model import AulaPlanModel
 from storage import AulaPlanStorage
+
+
+def student_surname_sort_key(name):
+    if "," in name:
+        surname = name.split(",", 1)[0].strip()
+    else:
+        parts = name.split()
+        surname = parts[-1] if parts else name
+
+    normalized_name = unicodedata.normalize("NFKD", name.casefold())
+    normalized_surname = unicodedata.normalize("NFKD", surname.casefold())
+    return (
+        "".join(char for char in normalized_surname if not unicodedata.combining(char)),
+        "".join(char for char in normalized_name if not unicodedata.combining(char)),
+    )
+
+
+def sort_students_by_assignment(students, seated_students):
+    unassigned = sorted(
+        (name for name in students if name not in seated_students),
+        key=student_surname_sort_key,
+    )
+    assigned = sorted(
+        (name for name in students if name in seated_students),
+        key=student_surname_sort_key,
+    )
+    return unassigned + assigned
+
+
+def student_photo_icon_color(has_photo):
+    return "#526b80" if has_photo else "#c9cdd1"
+
+
+def display_student_full_name(full_name):
+    if not full_name:
+        return ""
+    surnames, separator, given_name = full_name.partition(",")
+    if not separator:
+        return full_name.strip()
+    return f"{given_name.strip()} {surnames.strip()}".strip()
+
+
+def create_student_photo_icon(has_photo):
+    pixmap = QPixmap(20, 20)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(student_photo_icon_color(has_photo)))
+
+    head = QPainterPath()
+    head.addEllipse(7, 2, 6, 6)
+    painter.drawPath(head)
+
+    shoulders = QPainterPath()
+    shoulders.moveTo(3, 19)
+    shoulders.lineTo(4, 14)
+    shoulders.cubicTo(5, 10, 15, 10, 16, 14)
+    shoulders.lineTo(17, 19)
+    shoulders.closeSubpath()
+    painter.drawPath(shoulders)
+    painter.end()
+
+    return QIcon(pixmap)
+
 
 class DraggableListWidget(QListWidget):
     """Llista personalitzada que transmet el nom de l'alumne en arrossegar"""
@@ -67,6 +137,7 @@ class StudentPhotoDropWidget(QLabel):
         self.setFixedSize(120, 180)
         self.setAcceptDrops(True)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setWordWrap(True)
         self.setStyleSheet(
             "background: #f3f3f3; border: 2px dashed #888; border-radius: 8px; color: #333; font-size: 11pt;"
         )
@@ -106,7 +177,7 @@ class StudentPhotoDropWidget(QLabel):
     def set_placeholder(self, name):
         self.clear()
         self.setPixmap(QPixmap())
-        self.setText(f"{name}\nSin foto")
+        self.setText(f"{name}\nArrossega una foto carnet\n120×180px aquí")
         self.setStyleSheet(
             "background: #f3f3f3; border: 2px dashed #888; border-radius: 8px; color: #333; font-size: 11pt;"
         )
@@ -251,7 +322,6 @@ class AisleHandle(QLabel):
         self.main_window = main_window
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet("color: #999; font-size: 24pt;")
-        self.setToolTip("Arrossega el passadís a una altra separació entre columnes")
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.setAcceptDrops(False)
 
@@ -418,6 +488,7 @@ class AulaPlanWindow(QMainWindow):
         self.listbox_students.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self.listbox_students.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.listbox_students.setStyleSheet("font-size: 14pt;")
+        self.listbox_students.setIconSize(QSize(20, 20))
         self.listbox_students.itemDoubleClicked.connect(self.rename_student)
         self.listbox_students.itemChanged.connect(self.on_student_check_toggled)
         self.listbox_students.itemSelectionChanged.connect(
@@ -429,9 +500,25 @@ class AulaPlanWindow(QMainWindow):
         self.photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.photo_label.setStyleSheet("font-weight: bold;")
         left_layout.addWidget(self.photo_label)
+        photo_controls_layout = QHBoxLayout()
         self.student_photo_panel = StudentPhotoDropWidget(self)
         self.student_photo_panel.setToolTip("Arrossega una foto 120×180 aquí per assignar-la a l'alumne seleccionat")
-        left_layout.addWidget(self.student_photo_panel, alignment=Qt.AlignmentFlag.AlignCenter)
+        photo_controls_layout.addWidget(self.student_photo_panel)
+        self.btn_remove_student_photo = QPushButton("Eliminar foto")
+        self.btn_remove_student_photo.setToolTip(
+            "Treu la foto de l'alumne sense esborrar el fitxer"
+        )
+        self.btn_remove_student_photo.setEnabled(False)
+        self.btn_remove_student_photo.clicked.connect(self.remove_selected_student_photo)
+        photo_action_layout = QVBoxLayout()
+        photo_action_layout.addWidget(self.btn_remove_student_photo)
+        self.student_full_name_label = QLabel()
+        self.student_full_name_label.setWordWrap(True)
+        self.student_full_name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.student_full_name_label.setStyleSheet("font-size: 14pt;")
+        photo_action_layout.addWidget(self.student_full_name_label)
+        photo_controls_layout.addLayout(photo_action_layout)
+        left_layout.addLayout(photo_controls_layout)
 
         btn_remove = QPushButton("Eliminar Seleccionats")
         btn_remove.clicked.connect(self.remove_student)
@@ -558,13 +645,26 @@ class AulaPlanWindow(QMainWindow):
     def update_selected_student_photo(self):
         student_name = self.selected_student_name
         if student_name is None:
-            self.student_photo_panel.setText("Selecciona un alumne")
+            self.student_photo_panel.setText("Arrossega una imatge de 120x180px aquí per assignar-la a l'alumne seleccionat")
+            self.btn_remove_student_photo.setEnabled(False)
+            self.student_full_name_label.clear()
             return
+        self.student_full_name_label.setText(
+            display_student_full_name(
+                self.model.student_full_names.get(student_name, "")
+            )
+        )
         photo_path = self.model.student_photos.get(student_name)
+        self.btn_remove_student_photo.setEnabled(photo_path is not None)
         if photo_path and Path(photo_path).exists():
             self.student_photo_panel.set_photo(photo_path)
         else:
             self.student_photo_panel.set_placeholder(student_name)
+
+    def remove_selected_student_photo(self):
+        student_name = self.selected_student_name
+        if student_name is not None and self.model.clear_student_photo(student_name):
+            self.refresh_ui()
 
     def refresh_ui(self, refresh_students=True):
         if refresh_students:
@@ -593,7 +693,7 @@ class AulaPlanWindow(QMainWindow):
                 text_color = "white" if is_highlighted else ("#0d47a1" if student_name else "#bbbbbb")
 
                 cell = SeatFrame((r, c), student_name, self)
-                cell.setFixedSize(160, 120)
+                cell.setFixedSize(160, 180)
                 cell.setStyleSheet(f"""
                     background-color: {bg_color};
                     border: 2px solid {border_color};
@@ -642,6 +742,9 @@ class AulaPlanWindow(QMainWindow):
                 if photo_path and Path(photo_path).exists():
                     photo_label = QLabel()
                     photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    photo_label.setAttribute(
+                        Qt.WidgetAttribute.WA_TransparentForMouseEvents
+                    )
                     pixmap = QPixmap(photo_path)
                     scaled = pixmap.scaled(
                         100,
@@ -651,6 +754,16 @@ class AulaPlanWindow(QMainWindow):
                     )
                     photo_label.setPixmap(scaled)
                     cell_layout.addWidget(photo_label)
+                    lbl_name = QLabel(student_name)
+                    lbl_name.setAttribute(
+                        Qt.WidgetAttribute.WA_TransparentForMouseEvents
+                    )
+                    lbl_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    lbl_name.setStyleSheet(
+                        f"color: {text_color}; font-size: 18px; font-weight: bold; "
+                        "border: none; background: transparent;"
+                    )
+                    cell_layout.addWidget(lbl_name)
                 else:
                     lbl_name = QLabel(student_name if student_name else "[ Buit ]")
                     lbl_name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -725,22 +838,14 @@ class AulaPlanWindow(QMainWindow):
 
             filtered = [name for name in self.model.students if query in name.lower()]
 
-            def surname_sort_key(name):
-                parts = name.split()
-                second_part = parts[1] if len(parts) > 1 else name
-                return second_part.casefold(), name.casefold()
-
-            unseated_list = sorted(
-                (name for name in filtered if name not in seated_students),
-                key=surname_sort_key,
+            ordered_students = sort_students_by_assignment(
+                filtered,
+                seated_students,
             )
-            seated_list = sorted(
-                (name for name in filtered if name in seated_students),
-                key=surname_sort_key,
-            )
-
-            for name in unseated_list + seated_list:
+            for name in ordered_students:
+                has_photo = name in self.model.student_photos
                 item = QListWidgetItem(name)
+                item.setIcon(create_student_photo_icon(has_photo))
                 item.setData(Qt.ItemDataRole.UserRole, name)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(

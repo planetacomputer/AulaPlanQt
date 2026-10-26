@@ -1,6 +1,7 @@
 import csv
 import html
 import json
+from pathlib import Path
 
 
 class AulaPlanStorage:
@@ -28,6 +29,10 @@ class AulaPlanStorage:
                 for c in range(model.cols)
             },
             "student_photos": model.student_photos,
+            "studentsFullname": [
+                model.student_full_names.get(student, "")
+                for student in model.students
+            ],
         }
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
@@ -54,6 +59,12 @@ class AulaPlanStorage:
             model.show_computer_status = data.get("show_computer_status", True)
 
             model.students = data["students"]
+            full_names = data.get("studentsFullname", [])
+            model.student_full_names = {
+                student: full_name
+                for student, full_name in zip(model.students, full_names)
+                if isinstance(full_name, str) and full_name
+            }
             model.grid = {
                 tuple(map(int, k.split(","))): v
                 for k, v in data["grid"].items()
@@ -62,11 +73,15 @@ class AulaPlanStorage:
                 tuple(map(int, k.split(","))): bool(working)
                 for k, working in data.get("computer_working", {}).items()
             }
-            model.student_photos = {
-                student: photo
-                for student, photo in data.get("student_photos", {}).items()
-                if student in model.students
-            }
+            config_dir = Path(filepath).resolve().parent
+            model.student_photos = {}
+            for student, photo in data.get("student_photos", {}).items():
+                if student not in model.students:
+                    continue
+                photo_path = Path(photo)
+                if not photo_path.is_absolute():
+                    photo_path = config_dir / photo_path
+                model.student_photos[student] = str(photo_path.resolve())
 
     @staticmethod
     def load_default_json(filename, model):
@@ -179,7 +194,7 @@ class AulaPlanStorage:
         .computer-status {{ width: 20px; text-align: center; font-size: 20px; line-height: 1; font-weight: bold; }}
         .computer-status.working {{ color: #16803a; }}
         .computer-status.not-working {{ color: #d32f2f; }}
-        .name {{ font-size: 40px; font-weight: bold; text-align: center; color: #0d47a1; word-wrap: break-word; }}
+        .name {{ font-size: 35px; font-weight: bold; text-align: center; color: #0d47a1; word-wrap: break-word; }}
         .empty {{ font-size: 16px; color: #bbb; text-align: center; font-style: italic; }}
         .aisle {{ width: 20px; }}
         @media print {{ body {{ background: #fff; }} }}

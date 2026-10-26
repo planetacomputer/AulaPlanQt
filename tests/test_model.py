@@ -116,3 +116,31 @@ def test_clear_all_seats_supports_undo():
     assert model.grid == {}
     assert model.undo()
     assert model.grid == {(0, 0): "Ada"}
+
+
+def test_clearing_student_photo_preserves_image_file_and_supports_undo(tmp_path):
+    photo = tmp_path / "ada.jpg"
+    photo.write_bytes(b"photo")
+    model = AulaPlanModel()
+    model.add_student("Ada")
+    model.student_photos["Ada"] = str(photo)
+
+    assert model.clear_student_photo("Ada")
+    assert "Ada" not in model.student_photos
+    assert photo.exists()
+
+    assert model.undo()
+    assert model.student_photos["Ada"] == str(photo)
+    assert photo.exists()
+
+
+def test_removing_student_does_not_delete_assigned_photo(tmp_path):
+    photo = tmp_path / "ada.jpg"
+    photo.write_bytes(b"photo")
+    model = AulaPlanModel()
+    model.add_student("Ada")
+    model.student_photos["Ada"] = str(photo)
+
+    assert model.remove_student("Ada")
+    assert "Ada" not in model.student_photos
+    assert photo.exists()
