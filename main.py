@@ -367,6 +367,7 @@ class AulaPlanWindow(QMainWindow):
         self.listbox_students.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.listbox_students.setStyleSheet("font-size: 14pt;")
         self.listbox_students.itemDoubleClicked.connect(self.rename_student)
+        self.listbox_students.itemChanged.connect(self.on_student_check_toggled)
         self.listbox_students.itemSelectionChanged.connect(
             self.on_student_selection_changed
         )
@@ -634,9 +635,14 @@ class AulaPlanWindow(QMainWindow):
             )
 
             for name in unseated_list + seated_list:
-                status_icon = "☑" if name in seated_students else "☐"
-                item = QListWidgetItem(f"{status_icon}  {name}")
+                item = QListWidgetItem(name)
                 item.setData(Qt.ItemDataRole.UserRole, name)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(
+                    Qt.CheckState.Checked
+                    if name in seated_students
+                    else Qt.CheckState.Unchecked
+                )
                 if name == self.highlighted_student:
                     item.setBackground(Qt.GlobalColor.blue)
                 self.listbox_students.addItem(item)
@@ -649,6 +655,27 @@ class AulaPlanWindow(QMainWindow):
                     )
         finally:
             self.listbox_students.blockSignals(signals_were_blocked)
+
+    def on_student_check_toggled(self, item):
+        if item is None:
+            return
+
+        student_name = item.data(Qt.ItemDataRole.UserRole)
+        if student_name is None:
+            return
+
+        is_seated = student_name in self.model.grid.values()
+        if item.checkState() == Qt.CheckState.Checked:
+            if not is_seated:
+                item.setCheckState(Qt.CheckState.Unchecked)
+            return
+
+        if is_seated:
+            for seat_pos, assigned_student in list(self.model.grid.items()):
+                if assigned_student == student_name:
+                    self.model.unseat_student(seat_pos)
+                    break
+            self.refresh_ui()
 
     def on_student_selection_changed(self):
         selected_items = self.listbox_students.selectedItems()
