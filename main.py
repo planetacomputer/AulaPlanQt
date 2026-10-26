@@ -60,6 +60,58 @@ class LeftPanelWidget(QWidget):
         self.main_window.handle_unseat_drop(text)
 
 
+class StudentPhotoDropWidget(QLabel):
+    def __init__(self, main_window, parent=None):
+        super().__init__(parent)
+        self.main_window = main_window
+        self.setFixedSize(120, 180)
+        self.setAcceptDrops(True)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet(
+            "background: #f3f3f3; border: 2px dashed #888; border-radius: 8px; color: #333; font-size: 11pt;"
+        )
+        self.setText("Arrastra la foto\n120×180")
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+        file_path = urls[0].toLocalFile()
+        if file_path:
+            self.main_window.attach_photo_to_selected_student(file_path)
+            event.acceptProposedAction()
+
+    def set_photo(self, photo_path):
+        pixmap = QPixmap(photo_path)
+        if pixmap.isNull():
+            self.setText("Foto no válida")
+            return
+        scaled = pixmap.scaled(
+            self.width(),
+            self.height(),
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.setPixmap(scaled)
+        self.setStyleSheet("background: transparent; border: 1px solid #ccc; border-radius: 8px;")
+
+    def set_placeholder(self, name):
+        self.clear()
+        self.setPixmap(QPixmap())
+        self.setText(f"{name}\nSin foto")
+        self.setStyleSheet(
+            "background: #f3f3f3; border: 2px dashed #888; border-radius: 8px; color: #333; font-size: 11pt;"
+        )
+
+
 class SeatComputerCheckBox(QCheckBox):
     def __init__(self, student_name, main_window, parent=None):
         super().__init__(parent)
@@ -373,6 +425,14 @@ class AulaPlanWindow(QMainWindow):
         )
         left_layout.addWidget(self.listbox_students)
 
+        self.photo_label = QLabel("Foto del carnet")
+        self.photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.photo_label.setStyleSheet("font-weight: bold;")
+        left_layout.addWidget(self.photo_label)
+        self.student_photo_panel = StudentPhotoDropWidget(self)
+        self.student_photo_panel.setToolTip("Arrossega una foto 120×180 aquí per assignar-la a l'alumne seleccionat")
+        left_layout.addWidget(self.student_photo_panel, alignment=Qt.AlignmentFlag.AlignCenter)
+
         btn_remove = QPushButton("Eliminar Seleccionats")
         btn_remove.clicked.connect(self.remove_student)
         left_layout.addWidget(btn_remove)
@@ -477,6 +537,35 @@ class AulaPlanWindow(QMainWindow):
         layout.addWidget(buttons)
         dialog.exec()
 
+    @property
+    def selected_student_name(self):
+        current_item = self.listbox_students.currentItem()
+        if current_item is None:
+            return None
+        return current_item.data(Qt.ItemDataRole.UserRole)
+
+    def attach_photo_to_selected_student(self, file_path):
+        student_name = self.selected_student_name
+        if student_name is None:
+            QMessageBox.warning(self, "Selecció requerida", "Selecciona primer un alumne de la llista.")
+            return False
+        if self.model.set_student_photo(student_name, file_path):
+            self.refresh_ui()
+            return True
+        QMessageBox.warning(self, "Foto no vàlida", "La imatge no és vàlida o no s'ha pogut guardar.")
+        return False
+
+    def update_selected_student_photo(self):
+        student_name = self.selected_student_name
+        if student_name is None:
+            self.student_photo_panel.setText("Selecciona un alumne")
+            return
+        photo_path = self.model.student_photos.get(student_name)
+        if photo_path and Path(photo_path).exists():
+            self.student_photo_panel.set_photo(photo_path)
+        else:
+            self.student_photo_panel.set_placeholder(student_name)
+
     def refresh_ui(self, refresh_students=True):
         if refresh_students:
             self.filter_students()
@@ -504,7 +593,7 @@ class AulaPlanWindow(QMainWindow):
                 text_color = "white" if is_highlighted else ("#0d47a1" if student_name else "#bbbbbb")
 
                 cell = SeatFrame((r, c), student_name, self)
-                cell.setFixedSize(160, 80)
+                cell.setFixedSize(160, 120)
                 cell.setStyleSheet(f"""
                     background-color: {bg_color};
                     border: 2px solid {border_color};
@@ -549,26 +638,40 @@ class AulaPlanWindow(QMainWindow):
                 header_layout.addWidget(chk_computer)
                 cell_layout.addLayout(header_layout)
 
-                lbl_name = QLabel(student_name if student_name else "[ Buit ]")
-                lbl_name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-                lbl_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                name_font = QFont()
-                name_font.setPointSize(18)
-                name_font.setBold(bool(student_name))
-                available_width = cell.width() - 8
-                name_width = QFontMetricsF(name_font).horizontalAdvance(lbl_name.text())
-                if name_width > available_width:
-                    name_font.setPointSizeF(
-                        name_font.pointSizeF() * available_width / name_width
+                photo_path = self.model.student_photos.get(student_name) if student_name else None
+                if photo_path and Path(photo_path).exists():
+                    photo_label = QLabel()
+                    photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    pixmap = QPixmap(photo_path)
+                    scaled = pixmap.scaled(
+                        100,
+                        120,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
                     )
-                    while (
-                        name_font.pointSizeF() > 0.5
-                        and QFontMetricsF(name_font).horizontalAdvance(lbl_name.text()) > available_width
-                    ):
-                        name_font.setPointSizeF(max(0.5, name_font.pointSizeF() - 0.1))
-                lbl_name.setFont(name_font)
-                lbl_name.setStyleSheet(f"color: {text_color}; border: none; background: transparent;")
-                cell_layout.addWidget(lbl_name)
+                    photo_label.setPixmap(scaled)
+                    cell_layout.addWidget(photo_label)
+                else:
+                    lbl_name = QLabel(student_name if student_name else "[ Buit ]")
+                    lbl_name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+                    lbl_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    name_font = QFont()
+                    name_font.setPointSize(18)
+                    name_font.setBold(bool(student_name))
+                    available_width = cell.width() - 8
+                    name_width = QFontMetricsF(name_font).horizontalAdvance(lbl_name.text())
+                    if name_width > available_width:
+                        name_font.setPointSizeF(
+                            name_font.pointSizeF() * available_width / name_width
+                        )
+                        while (
+                            name_font.pointSizeF() > 0.5
+                            and QFontMetricsF(name_font).horizontalAdvance(lbl_name.text()) > available_width
+                        ):
+                            name_font.setPointSizeF(max(0.5, name_font.pointSizeF() - 0.1))
+                    lbl_name.setFont(name_font)
+                    lbl_name.setStyleSheet(f"color: {text_color}; border: none; background: transparent;")
+                    cell_layout.addWidget(lbl_name)
 
                 self.grid_layout.addWidget(cell, r, visual_c)
 
@@ -582,6 +685,8 @@ class AulaPlanWindow(QMainWindow):
                 self.model.rows,
                 1,
             )
+
+        self.update_selected_student_photo()
 
     def set_computer_status(self, pos, checkbox, working):
         self.model.set_computer_working(pos, working)
@@ -697,6 +802,7 @@ class AulaPlanWindow(QMainWindow):
                 item.setBackground(QBrush())
             if name == selected_student:
                 item.setBackground(Qt.GlobalColor.blue)
+        self.update_selected_student_photo()
         self.refresh_ui(refresh_students=False)
 
     def select_student_from_seat(

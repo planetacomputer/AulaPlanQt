@@ -1,4 +1,5 @@
 import random
+from pathlib import Path
 
 
 class AulaPlanModel:
@@ -13,6 +14,7 @@ class AulaPlanModel:
         self.students = []
         self.grid = {}  # (row, col) -> student_name
         self.computer_working = {}  # (row, col) -> bool; missing entries default to working
+        self.student_photos = {}  # student_name -> str path to photo file
         self.undo_stack = []
         self.redo_stack = []
 
@@ -51,6 +53,7 @@ class AulaPlanModel:
             "students": list(self.students),
             "grid": dict(self.grid),
             "computer_working": dict(self.computer_working),
+            "student_photos": dict(self.student_photos),
         }
         self.undo_stack.append(state)
         self.redo_stack.clear()
@@ -65,6 +68,7 @@ class AulaPlanModel:
             "students": list(self.students),
             "grid": dict(self.grid),
             "computer_working": dict(self.computer_working),
+            "student_photos": dict(self.student_photos),
         }
         self.redo_stack.append(current_state)
 
@@ -80,6 +84,7 @@ class AulaPlanModel:
         self.students = prev_state["students"]
         self.grid = prev_state["grid"]
         self.computer_working = prev_state.get("computer_working", {})
+        self.student_photos = prev_state.get("student_photos", {})
         return True
 
     def redo(self):
@@ -92,6 +97,7 @@ class AulaPlanModel:
             "students": list(self.students),
             "grid": dict(self.grid),
             "computer_working": dict(self.computer_working),
+            "student_photos": dict(self.student_photos),
         }
         self.undo_stack.append(current_state)
 
@@ -107,6 +113,7 @@ class AulaPlanModel:
         self.students = next_state["students"]
         self.grid = next_state["grid"]
         self.computer_working = next_state.get("computer_working", {})
+        self.student_photos = next_state.get("student_photos", {})
         return True
 
     def set_grid_size(self, rows, cols, aisle_count):
@@ -169,6 +176,39 @@ class AulaPlanModel:
             return True
         return False
 
+    def set_student_photo(self, student_name, image_path):
+        if student_name not in self.students:
+            return False
+
+        source = Path(image_path)
+        if not source.exists() or not source.is_file():
+            return False
+
+        images_dir = Path(__file__).resolve().parent / "images"
+        images_dir.mkdir(exist_ok=True)
+
+        stem = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in student_name.strip())
+        stem = stem.strip("_") or "student"
+        suffix = source.suffix.lower() or ".png"
+        dest = images_dir / f"{stem}{suffix}"
+        if dest.exists() and str(dest) != str(source):
+            dest.unlink()
+        if str(source) != str(dest):
+            import shutil
+            shutil.copy2(source, dest)
+        self.save_state()
+        self.student_photos[student_name] = str(dest)
+        return True
+
+    def clear_student_photo(self, student_name):
+        if student_name in self.student_photos:
+            photo_path = Path(self.student_photos[student_name])
+            if photo_path.exists():
+                photo_path.unlink(missing_ok=True)
+            del self.student_photos[student_name]
+            return True
+        return False
+
     def remove_student(self, name):
         if name in self.students:
             self.save_state()
@@ -176,6 +216,7 @@ class AulaPlanModel:
             self.grid = {
                 pos: st for pos, st in self.grid.items() if st != name
             }
+            self.clear_student_photo(name)
             return True
         return False
 
@@ -194,6 +235,9 @@ class AulaPlanModel:
             pos: new_name if name == old_name else name
             for pos, name in self.grid.items()
         }
+        if old_name in self.student_photos:
+            photo_path = self.student_photos.pop(old_name)
+            self.student_photos[new_name] = photo_path
         return True
 
     def move_or_swap(self, src_pos, dst_pos):

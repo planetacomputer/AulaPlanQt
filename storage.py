@@ -27,6 +27,7 @@ class AulaPlanStorage:
                 for r in range(model.rows)
                 for c in range(model.cols)
             },
+            "student_photos": model.student_photos,
         }
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
@@ -60,6 +61,11 @@ class AulaPlanStorage:
             model.computer_working = {
                 tuple(map(int, k.split(","))): bool(working)
                 for k, working in data.get("computer_working", {}).items()
+            }
+            model.student_photos = {
+                student: photo
+                for student, photo in data.get("student_photos", {}).items()
+                if student in model.students
             }
 
     @staticmethod
